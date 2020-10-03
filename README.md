@@ -30,5 +30,13 @@
     $ terraform init
     $ terraform apply
 
+    - Why the author wrote that book :
+
+    Terraform is a relatively new technology. As of May 2019, it has not yet hit a 1.0.0 release yet, and despite Terraform’s growing popularity,
+    it’s still difficult to find books, blog posts, or experts to help you master the tool. The official Terraform documentation does a good
+    job of introducing the basic syntax and features, but it includes little information on idiomatic patterns, best practices, testing,
+    reusability, or team workflows. It’s like trying to become fluent in French by studying only the vocabulary but not any of the grammar or idioms.
+
+
 
 

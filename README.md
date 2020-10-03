@@ -222,5 +222,92 @@
     For example, a common pattern is to use Packer to create an AMI that has the Docker Engine installed, deploy that AMI on a cluster of servers in your AWS account,
     and then deploy individual Docker containers across that cluster to run your applications.
 
+    4- Orchestration Tools :
+
+    + Server templating tools are great for creating VMs and containers, but how do you actually manage them? For most real-world use cases, you’ll need a way to do the following:
+
+    1- Deploy VMs and containers, making efficient use of your hardware.
+    2- Roll out updates to an existing fleet of VMs and containers using strategies such as rolling deployment, blue-green deployment, and canary deployment.
+    3- Monitor the health of your VMs and containers and automatically replace unhealthy ones (auto healing).
+    4- Scale the number of VMs and containers up or down in response to load (auto scaling).
+    5- Distribute traffic across your VMs and containers (load balancing).
+    6- Allow your VMs and containers to find and talk to one another over the network (service discovery).
+
+    - Tooling :
+
+    Handling these tasks is the realm of orchestration tools such as Kubernetes, Marathon/Mesos, Amazon Elastic Container Service (Amazon ECS), Docker Swarm, and Nomad.
+    For example, Kubernetes allows you to define how to manage your Docker containers as code. You first deploy a Kubernetes cluster, which is a group of servers that
+    Kubernetes will manage and use to run your Docker containers. Most major cloud providers have native support for deploying managed Kubernetes clusters, such as
+    Amazon Elastic Container Service for Kubernetes (Amazon EKS), Google Kubernetes Engine (GKE), and Azure Kubernetes Service (AKS).
+
+
+    -> create a file and name it deployment.yml :
+
+    apiVersion: apps/v1
+
+    # Use a Deployment to deploy multiple replicas of your Docker
+    # container(s) and to declaratively roll out updates to them
+    kind: Deployment
+
+    # Metadata about this Deployment, including its name
+    metadata:
+      name: example-app
+
+    # The specification that configures this Deployment
+    spec:
+      # This tells the Deployment how to find your container(s)
+      selector:
+        matchLabels:
+          app: example-app
+
+      # This tells the Deployment to run three replicas of your
+      # Docker container(s)”
+      replicas: 3
+
+      # Specifies how to update the Deployment. Here, we
+      # configure a rolling update.
+      strategy:
+        rollingUpdate:
+          maxSurge: 3
+          maxUnavailable: 0
+        type: RollingUpdate
+
+      # This is the template for what container(s) to deploy
+      template:
+
+        # The metadata for these container(s), including labels
+        metadata:
+          labels:
+            app: example-app
+
+        # The specification for your container(s)
+        spec:
+          containers:
+
+            # Run Apache listening on port 80
+            - name: example-app
+              image: httpd:2.4.39
+              ports:
+                 - containerPort: 80
+
+
+    - This file instructs Kubernetes to create a Deployment, which is a declarative way to define:
+
+    + One or more Docker containers to run together. This group of containers is called a Pod. The Pod defined in the preceding code contains a single Docker container that runs Apache.
+
+    + The settings for each Docker container in the Pod. The Pod in the preceding code configures Apache to listen on port 80.
+
+    + How many copies (aka replicas) of the Pod to run in your cluster. The preceding code configures three replicas. Kubernetes automatically figures out where in your cluster to deploy each Pod,
+    using a scheduling algorithm to pick the optimal servers in terms of high availability (e.g., try to run each Pod on a separate server so a single server crash doesn’t take down your app),
+    resources (e.g., pick servers that have available the ports, CPU, memory, and other resources required by your containers), performance (e.g., try to pick servers with the least load and fewest containers on them),
+    and so on.
+
+    + Kubernetes also constantly monitors the cluster to ensure that there are always three replicas running, automatically replacing any Pods that crash or stop responding.
+
+    + How to deploy updates. When deploying a new version of the Docker container, the preceding code rolls out three new replicas, waits for them to be healthy, and then undeploys the three old replicas.
+
+    ++ That’s a lot of power in just a few lines of YAML! You run kubectl apply -f example-app.yml to instruct Kubernetes to deploy your app. You can then make changes to the YAML file and run kubectl apply again to roll out the updates.
+
+
 
 

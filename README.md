@@ -151,7 +151,76 @@
         you can do a rolling deployment, which updates the servers in batches. For example, setting serial to 2 directs Ansible to update two
         of the servers at a time, until all five are done. Duplicating any of this logic in an ad hoc script would take dozens or even hundreds of lines of code.
 
+    - Server Templating Tools :
 
+    An alternative to configuration management that has been growing in popularity recently are server templating tools such as Docker, Packer, and Vagrant.
+    Instead of launching a bunch of servers and configuring them by running the same code on each one, the idea behind server templating tools is to create an
+    image of a server that captures a fully self-contained “snapshot” of the operating system (OS), the software, the files, and all other relevant details.
+    You can then use some other IaC tool to install that image on all of your servers, as shown in Figure 1-3.
+
+![](/static/packer_server_templating.png)
+
+    =+ As shown in Figure 1-4, there are two broad categories of tools for working with images:
+
+    - Virtual Machines
+    - Containers
+
+![](./static/vm-vs-containers.png)
+
+    For example, here is a Packer template called web-server.json that creates an Amazon Machine Image (AMI), which is a VM image that you can run on AWS:
+
+    {
+      "builders": [{
+        "ami_name": "packer-example",
+        "instance_type": "t2.micro",
+        "region": "us-east-2",
+        "type": "amazon-ebs",
+        "source_ami": "ami-0c55b159cbfafe1f0",
+        "ssh_username": "ubuntu"
+      }],
+      "provisioners": [{
+        "type": "shell",
+        "inline": [
+          "sudo apt-get update",
+          "sudo apt-get install -y php apache2",
+          "sudo git clone https://github.com/brikis98/php-app.git /var/www/html/app"
+        ],
+        "environment_vars": [
+          "DEBIAN_FRONTEND=noninteractive"
+        ]
+      }]
+    }
+
+    + Pre-requisites :
+
+    - You must have Packer installed on your computer.
+    - You must have an Amazon Web Services (AWS) account.
+
+    + Configure your AWS access keys as environment variables:
+
+        export AWS_ACCESS_KEY_ID=(your access key id)
+        export AWS_SECRET_ACCESS_KEY=(your secret access key)
+
+    To build the AMI:
+
+    $ packer build webserver.json
+
+    This Packer template configures the same Apache web server that you saw in setup-webserver.sh using the same Bash code.4
+    The only difference between the preceding code and previous examples is that this Packer template does not start
+    the Apache web server (e.g., by calling sudo service apache2 start). That’s because server templates are typically
+    used to install software in images, but it’s only when you run the image—for example, by deploying it on a server—that
+    you should actually run that software.
+
+    Note that the different server templating tools have slightly different purposes. Packer is typically used to create images that
+    you run directly on top of production servers, such as an AMI that you run in your production AWS account.
+    Vagrant is typically used to create images that you run on your development computers, such as a VirtualBox image that you
+    run on your Mac or Windows laptop. Docker is typically used to create images of individual applications.
+    You can run the Docker images on production or development computers, as long as some other tool has configured that computer with the Docker Engine.
+
+    - Docker + Packer -> cluster of servers on aws :
+
+    For example, a common pattern is to use Packer to create an AMI that has the Docker Engine installed, deploy that AMI on a cluster of servers in your AWS account,
+    and then deploy individual Docker containers across that cluster to run your applications.
 
 
 

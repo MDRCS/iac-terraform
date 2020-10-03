@@ -78,6 +78,79 @@
       then you should use an IaC tool that is purpose-built for the job.
 
 
+    2- Configuration Management Tools :
+
+    Chef, Puppet, Ansible, and SaltStack are all configuration management tools, which means that they are designed to install and manage software on existing servers.
+    For example, here is an Ansible Role called web-server.yml that configures the same Apache web server as the setup-webserver.sh script:
+
+    - name: Update the apt-get cache
+      apt:
+        update_cache: yes
+
+    - name: Install PHP
+      apt:
+        name: php
+
+    - name: Install Apache
+      apt:
+        name: apache2
+
+    - name: Copy the code from the repository
+      git: repo=https://github.com/brikis98/php-app.git dest=/var/www/html/app
+
+    - name: Start Apache
+      service: name=apache2 state=started enabled=yes
+
+    The code looks similar to the Bash script, but using a tool like Ansible offers a number of advantages:
+
+    - Coding conventions :
+
+    Ansible enforces a consistent, predictable structure, including documentation, file layout, clearly named parameters,
+    secrets management, and so on. While every developer organizes their ad hoc scripts in a different way,
+    most configuration management tools come with a set of conventions that makes it easier to navigate the code.
+
+    - Idempotence :
+
+    Writing an ad hoc script that works once isn’t too difficult; writing an ad hoc script that works correctly even if you run it over and over again is a lot more difficult. Every time you go to create a folder in your script,
+    you need to remember to check whether that folder already exists; every time you add a line of configuration to a file, you need to check that line doesn’t already exist; every time you want to run an app, you need to check
+    that the app isn’t already running.
+
+    Code that works correctly no matter how many times you run it is called idempotent code. To make the Bash script from the previous section idempotent, you’d need to add many lines of code, including lots of if-statements.
+    Most Ansible functions, on the other hand, are idempotent by default. For example, the web-server.yml Ansible role will install Apache only if it isn’t installed already and will try to start the Apache web server only
+    if it isn’t running already.
+
+    - Distribution
+
+    Ad hoc scripts are designed to run on a single, local machine. Ansible and other configuration management tools are designed specifically for managing large numbers of remote servers,
+    as shown in Figure 1-2.
+
+![](./static/ansible_install_distribution.png)
+
+    For example, to apply the web-server.yml role to five servers, you first create a file called hosts that contains the IP addresses of those servers:
+
+    -> create a file with hosts name.
+
+    [webservers]
+    11.11.11.11
+    11.11.11.12
+    11.11.11.13
+    11.11.11.14
+    11.11.11.15
+
+    -> next you define the ansible playbook :
+
+    $ create a file playbook.yml
+
+    - hosts: webservers
+      roles:
+      - webserver
+
+    $ ansible-playbook playbook.yml
+
+    NB: This instructs Ansible to configure all five servers in parallel. Alternatively, by setting a parameter called serial in the playbook,
+        you can do a rolling deployment, which updates the servers in batches. For example, setting serial to 2 directs Ansible to update two
+        of the servers at a time, until all five are done. Duplicating any of this logic in an ad hoc script would take dozens or even hundreds of lines of code.
+
 
 
 

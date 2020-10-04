@@ -362,4 +362,127 @@
     involves no creativity, no challenge, and no recognition. You could deploy code perfectly for months, and no one will take notice—until that one day when you mess it up. That creates a stressful and unpleasant environment. IaC offers a
     better alternative that allows computers to do what they do best (automation) and developers to do what they do best (coding).
 
+    ++ Exampe of Terraform code :
 
+    resource "aws_instance" "example" {
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t2.micro"
+    }
+
+    resource "google_dns_record_set" "a" {
+      name         = "demo.google-example.com"
+      managed_zone = "example-zone"
+      type         = "A"
+      ttl          = 300
+      rrdatas      = [aws_instance.example.public_ip]
+    }
+
+    Even if you’ve never seen Terraform code before, you shouldn’t have too much trouble reading it. This snippet instructs Terraform to make API calls to AWS to deploy a server and then make API calls to Google Cloud to create a
+    DNS entry pointing to the AWS server’s IP address. In just a single, simple syntax,
+    Terraform allows you to deploy interconnected resources across multiple cloud providers.
+
+    to deploy :
+
+    $ terraform apply
+
+    -> The terraform binary parses your code, translates it into a series of API calls to the cloud providers specified in the code, and makes those API calls as efficiently as possible.
+
+    - To Update/Change the provisionned servers :
+
+    ++ When someone on your team needs to make changes to the infrastructure, instead of updating the infrastructure manually and directly on the servers, they make their changes in the Terraform configuration files,
+    validate those changes through automated tests and code reviews, commit the updated code to version control, and then run the terraform apply command to have Terraform make the necessary API calls to deploy the changes.
+
+    -> TRANSPARENT PORTABILITY BETWEEN CLOUD PROVIDERS :
+
+    ++ could you instruct Terraform to deploy exactly the same infrastructure in another cloud provider, such as Azure or Google Cloud, in just a few clicks?
+
+    Answer: The reality is that you can’t deploy “exactly the same infrastructure” in a different cloud provider because the cloud providers don’t offer the same types of infrastructure! The servers, load balancers, and databases.
+    More : Terraform’s approach is to allow you to write code that is specific to each provider, taking advantage of that provider’s unique functionality, but to use the same language, toolset, and IaC practices under the hood for all providers.
+
+    - Templating server (Docker) + Provisionning tools (Terraform) vs Configuration managment (Ansible) :
+
+    1- Mutable Infrastructure Versus Immutable Infrastructure :
+
+    Configuration management tools such as Chef, Puppet, Ansible, and SaltStack typically default to a mutable infrastructure paradigm. For example, if you instruct Chef to install a new version of OpenSSL,
+    it will run the software update on your existing servers and the changes will happen in place. Over time, as you apply more and more updates, each server builds up a unique history of changes. As a result,
+    each server becomes slightly different than all the others, leading to subtle configuration bugs that are difficult to diagnose and reproduce (this is the same configuration drift problem that happens when
+    you manage servers manually, although it’s much less problematic when using a configuration management tool). Even with automated tests these bugs are difficult to catch; a configuration management
+    change might work just fine on a test server, but that same change might behave differently on a production server because the production server has accumulated months of changes that aren’t reflected in the test environment.
+
+    If you’re using a provisioning tool such as Terraform to deploy machine images created by Docker or Packer, most “changes” are actually deployments of a completely new server. For example, to deploy a new version of OpenSSL,
+    you would use Packer to create a new image with the new version of OpenSSL, deploy that image across a set of new servers, and then terminate the old servers. Because every deployment uses immutable images on fresh servers,
+    this approach reduces the likelihood of configuration drift bugs, makes it easier to know exactly what software is running on each server, and allows you to easily deploy any previous version of the software (any previous image) at any time.
+    It also makes your automated testing more effective, because an immutable image that passes your tests in the test environment is likely to behave exactly the same way in the production environment.
+
+    - Some downsides of Immutability :
+
+    Of course, it’s possible to force configuration management tools to do immutable deployments, too, but it’s not the idiomatic approach for those tools, whereas it’s a natural way to use provisioning tools. It’s also worth mentioning that
+    the immutable approach has downsides of its own. For example, rebuilding an image from a server template and redeploying all your servers for a trivial change can take a long time. Moreover, immutability lasts only until you actually run
+    the image. After a server is up and running, it will begin making changes on the hard drive and experiencing some degree of configuration drift (although this is mitigated if you deploy frequently).
+
+    2- Procedural Language Versus Declarative Language :
+
+    Chef and Ansible encourage a procedural style in which you write code that specifies, step by step, how to achieve some desired end state. Terraform, CloudFormation, SaltStack, Puppet, and Open Stack Heat all encourage a more declarative
+    style in which you write code that specifies your desired end state, and the IaC tool itself is responsible for figuring out how to achieve that state.
+
+    Examples : (Ansible vs Terraform)
+
+    Ansible :
+
+        - ec2:
+            count: 10
+            image: ami-0c55b159cbfafe1f0
+            instance_type: t2.micro”
+
+    Terraform :
+
+        resource "aws_instance" "example" {
+            count         = 15
+            ami           = "ami-0c55b159cbfafe1f0"
+            instance_type = "t2.micro"
+        }
+
+    For example, imagine traffic has gone up and you want to increase the number of servers to 15. With Ansible, the procedural code you wrote earlier is no longer useful; if you just updated the number of servers
+    to 15 and reran that code, it would deploy 15 new servers, giving you 25 total! So instead, you need to be aware of what is already deployed and write a totally new procedural script to add the five new servers:
+
+    - ec2:
+        count: 5
+        image: ami-0c55b159cbfafe1f0
+        instance_type: t2.micro
+
+    With declarative code, because all you do is declare the end state that you want, and Terraform figures out how to get to that end state, Terraform will also be aware of any state it created in the past.
+    Therefore, to deploy five more servers, all you need to do is go back to the same Terraform configuration and update the count from 10 to 15:
+
+    resource "aws_instance" "example" {
+      count         = 15
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t2.micro"
+    }
+
+    If you applied this configuration, Terraform would realize it had already created 10 servers and therefore all it needs to do is create five new servers.
+    In fact, before applying this configuration, you can use Terraform’s plan command to preview what changes it would make:
+
+    $ terraform plan
+
+    - Making changes between (Ansible vs Terraform) :
+
+    Now what happens when you want to deploy a different version of the app, such as AMI ID ami-02bcbb802e03574ba? With the procedural approach, both of your previous Ansible templates are again not useful,
+    so you need to write yet another template to track down the 10 servers you deployed previously (or was it 15 now?) and carefully update each one to the new version. With the declarative approach of Terraform,
+    you go back to the exact same configuration file again and simply change the ami parameter to ami-02bcbb802e03574ba:
+
+    resource "aws_instance" "example" {
+      count         = 15
+      ami           = "ami-02bcbb802e03574ba"
+      instance_type = "t2.micro”
+    }
+
+### + Best Combination Provisionning + Server templating :
+
+- PROVISIONING PLUS SERVER TEMPLATING PLUS ORCHESTRATION :
+
+
+    Example: Terraform, Packer, Docker, and Kubernetes. You use Packer to create a VM image that has Docker and Kubernetes installed. You then use Terraform to deploy (a) a cluster of servers, each of which runs this VM image,
+    and (b) the rest of your infrastructure, including the network topology (i.e., VPCs, subnets, route tables), data stores (e.g., MySQL, Redis), and load balancers. Finally, when the cluster of servers boots up, it forms a
+    Kubernetes cluster that you use to run and manage your Dockerized applications, as shown in Figure 1-11.
+
+![](./static/terraform_docker_packer_kubernetes.png)

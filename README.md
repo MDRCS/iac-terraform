@@ -486,3 +486,54 @@
     Kubernetes cluster that you use to run and manage your Dockerized applications, as shown in Figure 1-11.
 
 ![](./static/terraform_docker_packer_kubernetes.png)
+
+### + Getting Started with Terraform :
+
+    + First Tutorial that combine Terraform and AWS :
+
+        - Setting up your AWS account Installing Terraform
+        - Deploying a single server
+        - Deploying a single web server
+        - Deploying a configurable web server
+        - Deploying a cluster of web servers
+        - Deploying a load balancer
+        - Cleaning up
+
+
+    - Advice about AWS Root account :
+    -> it’s not a good idea to use the root user on a day-to-day basis. In fact, the only thing you should use the root user for is to create other user accounts with more-limited permissions, and then switch to one of those accounts immediately.
+
+    ++ after creating the IAM account AWS will show you the security credentials for that user, which consist of an Access Key ID and a Secret Access Key, You must save these immediately because they will never be shown again, and you’ll need them later on in this tutorial.
+    Remember that these credentials give access to your AWS account, so store them somewhere secure.
+
+    + Add account permissions :
+
+        AmazonEC2FullAccess
+        AmazonS3FullAccess
+        AmazonDynamoDBFullAccess
+        AmazonRDSFullAccess
+        CloudWatchFullAccess
+        IAMFullAccess
+
+    + About Virtual Private Cloud :
+
+    A NOTE ON DEFAULT VIRTUAL PRIVATE CLOUDS
+
+    If you are using an existing AWS account, it must have a Default VPC in it. A VPC, or Virtual Private Cloud, is an isolated area of your AWS account that has its own virtual network and IP address space. Just about every AWS resource deploys into a VPC.
+    If you don’t explicitly specify a VPC, the resource will be deployed into the Default VPC, which is part of every new AWS account. All of the examples in this book rely on this Default VPC, so if for some reason you deleted the one in your account,
+    either use a different region (each region has its own Default VPC) or create a new Default VPC using the AWS Web Console. Otherwise, you’ll need to update almost every example to include a vpc_id or subnet_id parameter pointing to a custom VPC.
+
+
+    + Install Terraform on OSX :
+
+    $ brew install terraform
+
+    run :
+    $ terraform
+
+    2- For Terraform to be able to make changes in your AWS account, you will need to set the AWS credentials for the IAM user you created earlier as the environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+
+         $ export AWS_ACCESS_KEY_ID=(your access key id)
+         $ export AWS_SECRET_ACCESS_KEY=(your secret access key)
+
+

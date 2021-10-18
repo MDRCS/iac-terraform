@@ -536,4 +536,94 @@
          $ export AWS_ACCESS_KEY_ID=(your access key id)
          $ export AWS_SECRET_ACCESS_KEY=(your secret access key)
 
+    NB: Note that these environment variables apply only to the current shell, so if you reboot your computer or open a new terminal window, you’ll need to export these variables again.
 
+    - First Of All we should authenticate to aws cli/sdk :
+
+    1- we should install `aws cli` on our machine.
+    -> https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-mac.html
+
+    2- run : `aws configure` and enter your credentials (keys, region etc)
+
+    - AUTHENTICATION OPTIONS :
+    In addition to environment variables, Terraform supports the same authentication mechanisms as all AWS CLI and SDK tools. Therefore, it’ll also be able to use credentials in $HOME/.aws/credentials, which are automatically 
+    generated if you run the configure command on the AWS CLI, or IAM Roles, which you can add to almost any resource in AWS.
+
+    1- Deploy a single Server :
+
+    1-1 The first step to using Terraform is typically to configure the provider(s) you want to use. Create an empty folder and put a file in it called main.tf that contains the following contents:
+    
+    ```
+        provider "aws" {
+            region = "us-east-2"
+        }
+    ```
+    
+    - For each type of provider, there are many different kinds of resources that you can create, such as servers, databases, and load balancers. The general syntax for creating a resource in Terraform is:
+    
+    ```
+        resource "<PROVIDER>_<TYPE>" "<NAME>" {
+            [CONFIG ...]
+        }
+    ```
+
+    -- where PROVIDER is the name of a provider (e.g., aws), TYPE is the type of resource to create in that provider (e.g., instance), NAME is
+       an identifier you can use throughout the Terraform code to refer to this resource (e.g., my_instance), and CONFIG consists of one or more arguments that are specific to that resource.
+
+    # For example, to deploy a single (virtual) server in AWS, known as an EC2 Instance, use the aws_instance resource in main.tf as follows:
+    
+    ```
+        resource "aws_instance" "web_server_instance" {
+            ami = "ami-0c55b159cbfafe1f0"
+            instance_type = "t2.micro"
+        }
+    ```
+
+    The aws_instance resource supports many different arguments, but for now, you only need to set the two required ones:
+    
+    - ami
+    The Amazon Machine Image (AMI) to run on the EC2 Instance. You can find free and paid AMIs in the AWS Marketplace or create your own using tools such as Packer 
+    (see “Server Templating Tools” for a discussion of machine images and server templating). The preceding code example sets the ami parameter to the ID of an 
+    Ubuntu 18.04 AMI in us-east-2. This AMI is free to use.
+    
+    - instance_type
+    The type of EC2 Instance to run. Each type of EC2 Instance provides a different amount of CPU, memory, disk space, and networking capacity. 
+    The EC2 Instance Types page lists all the available options. The preceding example uses t2.micro, which has one virtual CPU, 1 GB of memory, 
+    and is part of the AWS free tier.
+    
+    - link to terraform documentation :
+    https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/instance
+    
+    - Finally :
+    ++ In a terminal, go into the folder where you created main.tf and run the `terraform init` command.
+    
+    NB: just be aware that you need to run init any time you start with new Terraform code, and that it’s safe to run init multiple times
+    
+    - Now that you have the provider code downloaded, run the `terraform plan` command.
+    
+    -> about `terraform plan` command :
+
+    The plan command lets you see what Terraform will do before actually making any changes. This is a great way to sanity check your code before 
+    unleashing it onto the world. The output of the plan command is similar to the output of the diff command that is part of Unix, Linux, 
+    and git: anything with a plus sign (+) will be created, anything with a minus sign (–) will be deleted, and anything with a tilde sign (~) 
+    will be modified in place. In the preceding output, you can see that Terraform is planning on creating a single EC2 Instance and nothing else, which is exactly what you want.
+    
+    - then run `terraform apply` command.
+
+    Congrats, you’ve just deployed an EC2 Instance in your AWS account using Terraform! To verify this, head over to the EC2 console; 
+    
+    - Update EC2 Instance :
+
+    Sure enough, the Instance is there, though admittedly, this isn’t the most exciting example. Let’s make it a bit more interesting. First, notice that the EC2 Instance doesn’t have a name. 
+    To add one, you can add tags to the aws_instance resource:
+
+    ```
+        resource "aws_instance" "web_server_instance" {
+            ami = "ami-0c55b159cbfafe1f0"
+            instance_type = "t2.micro"
+    
+            tags = {
+                Name = "terraform-instance"
+            }
+        }
+    ```

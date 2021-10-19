@@ -627,3 +627,130 @@
             }
         }
     ```
+    
+    2- Deploy a Single web-srver :
+
+    The next step is to run a web server on this Instance. The goal is to deploy the simplest web architecture possible: 
+    a single web server that can respond to HTTP requests
+
+![](./static/simple-architecture.png)
+
+    In a real-world use case, you’d probably build the web server using a web framework like Ruby on Rails or Django, 
+    but to keep this example simple, let’s run a `dirt-simple web server` that always returns the text “Hello, World”:
+
+    This is a Bash script that writes the text “Hello, World” into index.html and runs a tool called busybox 
+    (which is installed by default on Ubuntu) to fire up a web server on port 8080 to serve that file. 
+
+    -> file `server.sh` :
+    ```
+    echo "Hello, world" > index.html
+    nohup busybox httpd -f -p 8080 &
+    ```
+    
+    -- I wrapped the busybox command with nohup and & so that the web server runs permanently in the background, 
+       whereas the Bash script itself can exit.
+
+    ++ PORT NUMBERS :
+    The reason this example uses port 8080, rather than the default HTTP port 80, is that listening on any port less than 1024 
+    requires root user privileges. This is a security risk, because any attacker who manages to compromise your server would 
+    get root privileges, too.
+    Therefore, it’s a best practice to run your web server with a non-root user that has limited permissions. 
+    That means you have to listen on higher-numbered ports, but as you’ll see later in this chapter, 
+    you can configure a load balancer to listen on port 80 and route traffic to the high-numbered ports on your server(s).
+
+    -- How do you get the EC2 Instance to run this script? 
+
+    Normally, as discussed in “Server Templating Tools”, you would use a tool like Packer to create a custom AMI that has 
+    the web server installed on it. Since the dummy web server in this example is just a one-liner that uses busybox, 
+    you can use a plain Ubuntu 18.04 AMI, and run the “Hello, World” script as part of the EC2 Instance’s User Data configuration. 
+    When you launch an EC2 Instance, you have the option of passing either a shell script or cloud-init directive to User Data, 
+    and the EC2 Instance will execute it during boot. You pass a shell script to User Data by setting the user_data argument 
+    in your Terraform code as follows:
+    
+    ```
+        resource "aws_instance" "web_server_instance" {
+          ami = "ami-0c55b159cbfafe1f0"
+          instance_type = "t2.micro"
+          user_data = <<-EOF
+                      #!/bin/bash
+                      echo "Hello, world" > index.html
+                      nohup busybox httpd -f -p 8080 &
+                      EOF
+          tags = {
+            Name = "terraform-instance"
+          }
+        }
+    ```
+    
+    -- The <<-EOF and EOF are Terraform’s heredoc syntax, which allows you to create multiline strings without having to insert newline 
+       characters all over the place.
+    
+    - Allow EC2 Instance to receive Traffic :
+
+    You need to do one more thing before this web server works. By default, AWS does not allow any incoming or outgoing traffic from an EC2 Instance. 
+    To allow the EC2 Instance to receive traffic on port 8080, you need to create a security group:
+    
+    ```
+        resource "aws_security_group" "instance" {
+          name = "terraform-example-instance"
+        
+          ingress {
+            from_port = 8080
+            to_port = 8080
+            protocol = "tcp"
+            cidr_blocks = ["0", "0", "0", "0"]
+          }
+        
+        }
+    ```
+    
+    This code creates a new resource called aws_security_group (notice how all resources for the AWS provider begin with aws_) and specifies that this group allows incoming TCP requests on port
+    8080 from the CIDR block 0.0.0.0/0. CIDR blocks are a concise way to specify IP address ranges. For example, a CIDR block of 10.0.0.0/24 represents all IP addresses between 10.0.0.0 and 10.0.0.255. 
+    The CIDR block 0.0.0.0/0 is an IP address range that includes all possible IP addresses, so this security group allows incoming requests on port 8080 from any IP.
+    
+    - Connect EC2 with security group to allow Traffic :
+    ++ Simply creating a security group isn’t enough; you also need to tell the EC2 Instance to actually use it by passing the ID of the security group into the vpc_security_group_ids argument of the aws_instance resource. 
+       To do that, you first need to learn about Terraform expressions.
+
+    One particularly useful type of expression is a reference, which allows you to access values from other parts of your code. To access the ID of the security group resource, you are going to need to use a resource attribute reference, which uses the following syntax:
+    --  `<PROVIDER>_<TYPE>.<NAME>.<ATTRIBUTE>`
+    
+    ++ Complete the expression :
+    - where PROVIDER is the name of the provider (e.g., aws), TYPE is the type of resource (e.g., security_group), NAME is the name of that resource (e.g., the security group is named "instance"), 
+      and ATTRIBUTE is either one of the arguments of that resource (e.g., name) or one of the attributes exported by the resource (you can find
+      the list of available attributes in the documentation for each resource).
+    
+    add this expression to ec2 resource : `vpc_security_group_ids = [aws_security_group.instance.id]`
+    
+    +++ When you add a reference from one resource to another, you create an implicit dependency. Terraform parses these dependencies, builds a dependency graph from them, and uses that to automatically determine 
+        in which order it should create resources.
+
+    -- You can even get Terraform to show you the dependency graph by running the graph command :
+    -> run `terraform graph`
+
+-> you can turn this description language into a visual graph using this tool :
+[here](http://dreampuf.github.io/GraphvizOnline/)
+
+![](./static/viz_graph.png)
+    
+    
+    NB: It’s worth mentioning that although the web server is being replaced, any users of that web server would experience downtime; 
+        you’ll see how to do a zero-downtime deployment with Terraform.
+
+    - Finally, we should ping public ip address that we could find when we click on the instance in aws console.
+    
+    ```
+        $ curl http://<EC2_INSTANCE_PUBLIC_IP>:8080
+        Hello, World
+    ```
+
+    Yay! You now have a working web server running in AWS!
+    
+    - Network Security :
+
+    Therefore, for production systems, you should deploy all of your servers, and certainly all of your data stores, in private subnets, 
+    which have IP addresses that can be accessed only from within the VPC and not from the public internet. 
+    The only servers you should run in public subnets are a small number of reverse proxies and load balancers that you lock down as much as possible
+    
+    
+    

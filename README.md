@@ -752,5 +752,231 @@
     which have IP addresses that can be accessed only from within the VPC and not from the public internet. 
     The only servers you should run in public subnets are a small number of reverse proxies and load balancers that you lock down as much as possible
     
+    2- Deploy a Configurable Web Server :
+
+    You might have noticed that the web server code has the port 8080 duplicated in both the security group and the User Data configuration. This violates the Don’t Repeat Yourself (DRY) principle: 
+    every piece of knowledge must have a single, unambiguous, authoritative representation within a system.8 If you have the port number in two places, it’s easy to update it in one place but forget 
+    to make the same change in the other place.
+    To allow you to make your code more DRY and more configurable, Terraform allows you to define input variables. Here’s the syntax for declaring a variable:
+
+    ```
+    variable "NAME" {
+        [CONFIG ...]
+    }
+    ```
     
+    The body of the variable declaration can contain three parameters, all of them optional:
     
+    - description :
+    It’s always a good idea to use this parameter to document how a variable is used. Your teammates will not only be able to see this description
+    while reading the code, but also when running the plan or apply commands
+    
+    - default
+    There are a number of ways to provide a value for the variable, including passing it in at the command line (using the -var option), via a file (using the -var-file option), or via an environment variable (Terraform looks for environment variables
+    of the name TF_VAR_<variable_name>). If no value is passed in, the variable will fall back to this default value. If there is no default value, Terraform will interactively prompt the user for one.
+    
+    - type
+    This allows you enforce type constraints on the variables a user passes in. Terraform supports a number of type constraints, including string, number, bool, list, map, set, object, tuple, and any. If you don’t specify a type, Terraform assumes the type is any.
+    
+    Here is an example of an input variable that checks to verify that the value you pass in is a number:
+    
+    ```
+    variable "number_example" {
+        description = "An example of a number variable in
+                        Terraform"
+        type = number
+        default = 42 
+        }
+    ```
+    
+    And here’s an example of a variable that checks whether the value is a list:
+    
+    ```
+    variable "list_example" {
+        description = "An example of a list in Terraform" type = list
+        default = ["a", "b", "c"]
+    }
+    ```
+
+    You can combine type constraints, too. For example, here’s a list input variable that requires all of the items in the list to be numbers:
+    
+    ```
+    variable "list_numeric_example" {
+        description = "An example of a numeric list in Terraform" 
+        type = list(number)
+        default = [1,2,3,4]
+    ```
+    
+    And here’s a map that requires all of the values to be strings:
+
+    ```
+    variable "map_example" {
+        description = "An example of a map in Terraform" type = map(string)
+          default = {
+            key1 = "value1"
+            key2 = "value2"
+            key3 = "value3"
+        } 
+    }
+    ```
+
+    ```
+    variable "object_example" {
+    
+    description = "An example of a structural type in Terraform"    
+    
+    type = object({
+        age = number
+        name = string
+        tags = list(string)
+        enabled = bool
+    })
+
+    default = {
+            age = 25
+            name = "Mohamed El Rahali"
+            tags = ["work", "hobbies"]
+            enabled = true
+        }
+    }
+    ```
+
+    - Refactor terraform code to use server_port as a variable :
+    ```
+    variable "server_port" {
+      description = "The port the server will use for HTTP requests"
+      type = number
+      default = 8080
+    }
+    ```
+
+    you can also let `default` param empty and use terminal arg `-var` :
+    
+    - terraform plan -var "server_port"=8080 
+    
+    You could also set the variable via an environment variable named TF_VAR_<name>, where <name> is the name of the variable you’re trying to set:
+    
+    $ export TF_VAR_server_port=8080
+    $ terraform plan
+    
+    - To use the value from an input variable in your Terraform code :
+
+    + var.<VARIABLE_NAME>
+    
+    ALSO TO USE THE VARIABLE INSIDE `user_data` (string literal):
+
+    user_data = <<-EOF #!/bin/bash
+            echo "Hello, World" > index.html
+            nohup busybox httpd -f -p ${var.server_port} &
+            EOF
+
+    2- to define output variable that you could request to check validity of a variable :
+    
+    ```
+    output "<NAME>" {
+        value = <VALUE>
+        [CONFIG ...]
+    }
+    ```
+    
+    The NAME is the name of the output variable, and VALUE can be any Terraform expression that you would like to output. The CONFIG can contain two additional parameters, both optional:
+    
+    + description :
+    It’s always a good idea to use this parameter to document what type of data is contained in the output variable.
+    
+    + sensitive :
+    Set this parameter to true to instruct Terraform not to log this output at the end of terraform apply. This is useful if the output variable contains sensitive material or secrets such as passwords or private keys.
+      
+    For example, instead of having to manually poke around the EC2 console to find the IP address of your server, you can provide the IP address as an output variable:
+
+    ```
+    output "public_ip" {
+        value       = aws_instance.example.public_ip
+        description = "The public IP address of the web server"
+    }
+    ```
+
+    - terraform apply
+
+    NB: You can also use the terraform output command to list all outputs without applying any changes.
+    
+    -> terraform output
+    or terraform output public_ip
+    
+    - Conclusion :
+
+    This is particularly handy for scripting. For example, you could create a deployment script that runs terraform apply to deploy the web server, uses terraform output public_ip to grab its public IP, 
+    and runs curl on the IP as a quick smoke test to validate that the deployment worked.
+    
+    3- Deploying a Cluster of Web Servers :
+
+    Managing such a cluster manually is a lot of work. Fortunately, you can let AWS take care of it for by you using an Auto Scaling Group
+    An ASG takes care of a lot of tasks for you completely automatically, including launching a cluster of EC2 Instances, monitoring 
+    the health of each Instance, replacing failed Instances, and adjusting the size of the cluster in response to load.
+    
+![](./static/auto_scaling_group.png)
+    
+    The first step in creating an ASG is to create a launch configuration, which specifies how to configure each EC2 Instance in the ASG. The aws_launch_configuration resource uses 
+    almost exactly the same parameters as the aws_instance resource (two of the parameters have different names: ami is now image_id and vpc_security_group_ids is now security_groups),    
+
+    ```
+        resource "aws_launch_configuration" "web_server_instance" {
+          image_id = "ami-0c55b159cbfafe1f0"
+          instance_type = "t2.micro"
+          vpc_security_group = [aws_security_group.instance.id]
+          user_data = <<-EOF
+                      #!/bin/bash
+                      echo "Hello, world" > index.html
+                      nohup busybox httpd -f -p ${var.server_port} &
+                      EOF
+        
+        }
+    ```
+    
+    Now you can create the ASG itself using the aws_autoscaling_group resource:
+
+    ```
+        
+        resource "aws_autoscaling_group" "example" {
+        launch_configuration = aws_launch_configuration.example.name
+
+        min_size = 2
+        max_size = 10
+
+          tag {
+            key     = "Name"
+            value   = "terraform-asg-example"
+            propagate_at_launch = true
+          }
+    }
+    ```
+
+    PAY ATTENTION :
+
+    This ASG will run between 2 and 10 EC2 Instances (defaulting to 2 for the initial launch), each tagged with the name terraform- asg-example. Note that the ASG uses a reference to fill in the launch configuration name. (THE VARIABLE `launch_configuration = aws_launch_configuration.example.name`) This leads to a problem: 
+    launch configurations are immutable, so if you change any parameter of your launch configuration, Terraform will try to replace it. Normally, when replacing a resource, Terraform `deletes the old resource first` and `then creates its replacement`, but because your ASG now has a reference to the old resource, Terraform won’t be able to delete it.
+
+    - That we should create the new launch configuration before destroying the old one like that we won't get this problem.
+    
+    ++ Lifecycles :
+
+    To solve this problem, you can use a lifecycle setting. Every Terraform resource supports several lifecycle settings that configure how that resource is created, updated, and/or deleted. A particularly useful lifecycle setting is create_before_destroy. If you set create_before_destroy to true, Terraform will invert the order in which it replaces resources, 
+    creating the replacement resource first (including updating any references that were pointing at the old resource to point to the replacement) and then deleting the old resource. Add the lifecycle block to your
+    
+    ```
+        resource "aws_launch_configuration" "example" {
+              image_id = "ami-0c55b159cbfafe1f0"
+              instance_type = "t2.micro"
+              security_groups = [aws_security_group.instance.id]
+              user_data = <<-EOF
+                          #!/bin/bash
+                          echo "Hello, world" > index.html
+                          nohup busybox httpd -f -p ${var.server_port} &
+                          EOF
+            -----------------------------------
+              lifecycle {
+                create_before_destroy = true
+              }
+            ------------------------------------
+        }
+    ```

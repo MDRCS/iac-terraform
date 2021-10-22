@@ -980,3 +980,264 @@
             ------------------------------------
         }
     ```
+
+    - Subnets :
+
+    There’s also one other parameter that you need to add to your ASG to make it work: subnet_ids. This parameter specifies to the ASG into which VPC subnets the EC2 Instances should be deployed (see Network Security for background info on subnets). Each subnet lives in an isolated AWS AZ (that is, isolated datacenter), so by deploying your Instances across multiple subnets,
+    you ensure that your service can keep running even if some of the datacenters have an outage. You could hardcode the list of subnets, but that won’t be maintainable or portable, so a better option is to use data sources to get the list of subnets in your AWS account.
+
+    - Data sources :
+    
+    A data source represents a piece of read-only information that is fetched from the provider (in this case, AWS) every time you run Terraform. Adding a data source to your Terraform configurations does not create anything new; it’s just a way to query the provider’s APIs for data and to make that data available to the rest of your Terraform code. 
+    Each Terraform provider exposes a variety of data sources. For example, the AWS provider includes data sources to look up VPC data, subnet data, AMI IDs, IP address ranges, the current user’s identity, and much more.
+    
+    ```
+        data "<PROVIDER>_<TYPE>" "<NAME>" {
+            [CONFIG ...]
+        }
+    ``` 
+
+    Here, PROVIDER is the name of a provider (e.g., aws), TYPE is the type of data source you want to use (e.g., vpc), NAME is an identifier
+    you can use throughout the Terraform code to refer to this data source, and CONFIG consists of one or more arguments that are specific to that data source. For example, here is how you can use the aws_vpc data source to look up the data for your Default VPC
+    
+    ```
+        data "aws_vpc" "default" {
+            default = true
+        }
+    ```
+
+    Note that with data sources, the arguments you pass in are typically search filters that indicate to the data source what information you’re looking for. With the aws_vpc data source, the only filter you need is default = true, which directs Terraform to look up the Default VPC in your AWS account.
+
+    To get the data out of a data source, you use the following attribute reference syntax:
+    
+    -> `data.<PROVIDER>_<TYPE>.<NAME>.<ATTRIBUTE>`
+
+    For example, to get the ID of the VPC from the aws_vpc data
+    source, you would use the following:
+
+    -> `data.aws_vpc.default.id`
+
+    You can combine this with another data source, aws_subnet_ids, to look up the subnets within that VPC:
+    Finally, you can pull the subnet IDs out of the aws_subnet_ids data source and tell your ASG to use those subnets via the (somewhat oddly named) vpc_zone_identifier argument:
+    
+    ```
+        data "aws_subnet_ids" "default" { 
+            vpc_id = data.aws_vpc.default.id
+        }
+    ```
+
+    3-2 Deploying a Load Balancer :
+    
+    At this point, you can deploy your ASG, but you’ll have a small problem: you now have multiple servers, each with its own IP address, but you typically want to give of your end users only a single IP to use. One way to solve this problem is to deploy a load balancer to distribute traffic across your servers and to give all your users the IP (actually, the DNS name) of the load balancer. 
+    Creating a load balancer that is highly available and scalable is a lot of work. Once again, you can let AWS take care of it for you, this time by using Amazon’s Elastic Load Balancer (ELB) service, as shown in Figure 2-10.
+
+![](./static/Elastic_load_balancer.png)    
+    
+    - AWS offers three different types of load balancers:    
+
+    1- Application Load Balancer (ALB)
+    Best suited for load balancing of HTTP and HTTPS traffic. Operates at the application layer (Layer 7) of the OSI model.
+    
+    2- Network Load Balancer (NLB)
+    Best suited for load balancing of TCP, UDP, and TLS traffic. Can scale up and down in response to load faster than the ALB (the NLB is designed to scale to tens of millions of requests per second). Operates at the transport layer (Layer 4) of the OSI model.
+    
+    3- Classic Load Balancer (CLB)
+    This is the “legacy” load balancer that predates both the ALB and NLB. It can handle HTTP, HTTPS, TCP, and TLS traffic, but with far fewer features than either the ALB or NLB. Operates at both the application layer (L7) and transport layer (L4) of the OSI model.
+        
+    --> Most applications these days should use either the ALB or the NLB. Because the simple web server example you’re working on is an HTTP app without any extreme performance requirements, the ALB is going to be the best fit.
+
+    As shown in Figure 2-11, the ALB consists of several parts: 
+    
+    1- Listener
+    Listens on a specific port (e.g., 80) and protocol (e.g., HTTP).
+    
+    2- Listener rule
+    Takes requests that come into a listener and sends those that match specific paths 
+    (e.g., /foo and /bar) or hostnames (e.g., foo.example.com and bar.example.com) to specific target groups.
+    
+    3- Target groups
+    One or more servers that receive requests from the load balancer. The target group also performs health checks on these servers and only sends requests to healthy nodes.
+    
+![](./static/APPLICATION_LOAD_BALANCER.png)
+    
+    The first step is to create the ALB itself using the aws_lb resource:
+    
+    resource "aws_lb" "example" {
+    name = "terraform-asg-example" load_balancer_type = "application"
+    subnets = data.aws_subnet_ids.default.ids
+    }
+    
+    Note that the subnets parameter configures the load balancer to use all the subnets in your Default VPC by using the aws_subnet_ids data source.
+    NB:  AWS automatically scales the number of load balancer servers up and down based on traffic and handles failover if one of those servers goes down, so you get scalability and high availability out of the box.
+
+    - Define a listener :
+
+        resource "aws_lb_listener" "http" {
+          load_balancer_arn = aws_lb.example.arn
+          port = 80
+          protocol = "HTTP"
+        
+          # By default, return a simple 404 page
+          # Listener Rules
+          default_action {
+            type = "fixed-response"
+        
+            fixed_response {
+              content_type = "text/plain"
+              message_body = "404: page not found"
+              status_code = 404
+            }
+          }
+        }
+
+    --> This listener configures the ALB to listen on the default HTTP port, port 80, use HTTP as the protocol, and send a simple 404 page as the default response for requests that don’t match any listener rules.
+    
+    Note that, by default, all AWS resources, including ALBs, don’t allow any incoming or outgoing traffic, so you need to create a new security group specifically for the ALB. This security group should 
+    allow incoming requests on port 80 so that you can access the load
+    balancer over HTTP, and outgoing requests on all ports so that the load balancer can perform health checks:
+
+    NB: there is no problem using port 80 (under 1024) for the loadbalancer but it could be a threat using this port in the server this why we used 8080 in ec2 instances.
+    
+    ```
+        resource "aws_security_group" "alb" {
+          name = "terraform-example-alb"
+        
+          # Allow inbound HTTP requests
+          ingress {
+            from_port = 80
+            protocol  = "tcp"
+            to_port   = 80
+            cidr_blocks = ["0.0.0.0/0"] # you can use any IP address
+          }
+        
+          # Allow all outbound requests
+        
+          egress {
+            from_port = 0
+            protocol  = "-1"
+            to_port   = 0
+            cidr_blocks = ["0.0.0.0/0"]
+          }
+        
+        }
+
+    ```
+
+    You’ll need to tell the aws_lb resource to use this security group via the security_groups argument:
+    
+    ````
+    resource "aws_lb" "example" {
+        name = "terraform-asg-example" 
+        load_balancer_type = "application"
+        subnets = data.aws_subnet_ids.default.ids
+        security_groups    = [aws_security_group.alb.id]
+    }
+    ```
+
+    Next, you need to create a target group for your ASG using the aws_lb_target_group resource:
+    
+    ```
+
+    resource "aws_alb_target_group" "asg" {
+      name = "terraform-asg-example"
+      port = var.server_port
+      protocol = "HTTP"
+      vpc_id = data.aws_vpc.default.id
+    
+      health_check {
+        path = "/"
+        protocol = "HTTP"
+        matcher = "200"
+        interval = 15
+        timeout = 3
+        healthy_threshold = 2
+        unhealthy_threshold = 2
+      }
+    }
+    
+    ```
+
+    +++ Note that this target group will health check your Instances by periodically 
+        sending an HTTP request to each Instance and will consider the Instance “healthy” 
+        only if the Instance returns a response that matches the configured matcher 
+        (e.g., you can configure a matcher to look for a 200 OK response). If an Instance fails to respond, 
+        perhaps because that Instance has gone down or is overloaded, it will be marked as “unhealthy,” and 
+        the target group will automatically stop sending traffic to it to minimize disruption for your users.
+
+    How does the target group know which EC2 Instances to send requests to? You could attach a static list of EC2 Instances 
+    to the target group using the aws_lb_target_group_attachment resource, but with an ASG, Instances can launch or terminate at any time, 
+    so a static list won’t work. Instead, you can take advantage of the first-class integration between the ASG and the ALB. 
+    Go back to the aws_autoscaling_group resource and set its target_group_arns argument to point at your new target group:
+
+    ``
+    resource "aws_autoscaling_group" "example" {
+      launch_configuration = aws_launch_configuration.example.name
+      vpc_zone_identifier = data.aws_subnet_ids.default.ids
+        ----------------------------------------
+      target_group_arns = [aws_alb_target_group.asg.arn]
+      health_check_type = "ELB"
+        ----------------------------------------
+      min_size = 2
+      max_size = 10
+    
+      tag {
+        key     = "Name"
+        value   = "terraform-asg-example"
+        propagate_at_launch = true
+      }
+    }
+    ```
+
+    - Health check type :
+
+    You should also update the health_check_type to "ELB". The default health_check_type is "EC2", which is a minimal
+    health check that considers an Instance unhealthy only if the AWS hypervisor says the VM is completely down or unreachable. 
+    The "ELB" health check is more robust, because it instructs the ASG to use the target group’s health check to determine whether 
+    an Instance is healthy and to automatically replace Instances if the target group reports them as unhealthy. That way, 
+    Instances will be replaced not only if they are completely down, but also if, for example, they’ve stopped serving 
+    requests because they ran out of memory or a critical process crashed.
+
+    Finally, it’s time to tie all these pieces together by creating listener rules using the aws_lb_listener_rule resource:
+    
+    ```
+        resource "aws_alb_listener_rule" "asg" {
+          listener_arn = aws_lb_listener.http.arn
+          priority = 100
+        
+          action {
+            type = "forward"
+            target_group_arn = aws_alb_target_group.asg.arn
+          }
+        
+          condition {
+            path_pattern {
+                values = ["*"]
+            }
+          }
+        }
+    ```
+    
+    There’s one last thing to do before you deploy the load balancer— replace the old public_ip output of the single EC2 Instance you had before with an output that shows the DNS name of the ALB:
+    
+    ```
+        output "alb_dns_name" {
+          value = aws_alb.example.dns_name
+          description = "The domain name of the load balancer"
+        
+        }
+    ```
+
+    Run terraform apply and read through the plan output. You should see that your original single EC2 Instance is being removed, and in its place, Terraform will create a launch configuration, 
+    ASG, ALB, and a security group. If the plan looks good, type yes and hit Enter. 
+    When apply completes, you should see the alb_dns_name output:
+
+    Outputs:
+    alb_dns_name = "terraform-asg-example-506010843.us-east-2.elb.amazonaws.com"
+    
+    - To make sure that all works good try to request the dns :
+    -> curl terraform-asg-example-506010843.us-east-2.elb.amazonaws.com
+
+
+    -> Finally to destroy all infra created, just run `terraform destroy` and you will delete all r4esources that are created.
+    
+    

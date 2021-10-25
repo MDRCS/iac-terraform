@@ -1240,4 +1240,383 @@
 
     -> Finally to destroy all infra created, just run `terraform destroy` and you will delete all r4esources that are created.
     
+# Tools and resources for devops eng :
+
+- [A List of one line http  servers](https://gist.github.com/willurd/5720255)
+- [cidr calculator](https://cidr.xyz/) # to know the range of IP Addresses allowed in you instance or loadbalancer. 
+- [A Comprehensive Guide to Building a Scalable Web App on Amazon Web Services](https://www.airpair.com/aws/posts/building-a-scalable-web-app-on-amazon-web-services-p1)
+
+    
+    NB: To keep these examples simple, we’re running the EC2 Instances and ALB in the same subnets. In production usage, you’d most likely run them in different subnets, 
+        with the EC2 Instances in private subnets (so they aren’t directly accessible from the public internet) and the ALBs in public subnets (so users can access them directly).
+
+## Chapter 3. How to Manage Terraform State :
+
+    If you’re using Terraform for a personal project, storing state in a single terraform.tfstate file that lives locally on your computer works just fine. But if you want to use Terraform as a team on a real product, 
+    you run into several problems:
+    
+    - Shared storage for state files
+    To be able to use Terraform to update your infrastructure, each of your team members needs access to the same Terraform state files. That means you need to store those files in a shared location.
+    
+    - Locking state files
+    As soon as data is shared, you run into a new problem: locking. Without locking, if two team members are running Terraform at the same time, you can run into race conditions as multiple 
+    Terraform processes make concurrent updates to the state files, leading to conflicts, data loss, and state file corruption.
+    
+    - Isolating state files
+    When making changes to your infrastructure, it’s a best practice to isolate different environments. For example, when making a change in a testing or staging environment, you want to be sure
+    
+    - THE STATE FILE IS A PRIVATE API
+    The state file format is a private API that changes with every release and is meant only for internal use within Terraform. You should never edit the Terraform state files by hand or write code that reads 
+    them directly.
+    If for some reason you need to manipulate the state file—which should be a relatively rare occurrence—use the terraform import or terraform state commands (you’ll see examples of both in Chapter 5).
+     
+    ++ that there is no way you can accidentally break production. But how can you isolate your changes if all of your infrastructure is defined in the same Terraform state file?
+
+    1- Shared Storage for State Files :
+    
+    The most common technique for allowing multiple team members to access a common set of files is to put them in version control (e.g., Git). Although you should definitely store your Terraform code in version control, storing Terraform state in version control is a bad idea for the following reasons:
+    
+    - Manual error
+    It’s too easy to forget to pull down the latest changes from version control before running Terraform or to push your latest changes to version control after running Terraform. It’s just a matter of time before someone on your team runs Terraform with out-of-date state files and as a result, accidentally rolls back or duplicates previous deployments.
+    
+    - Locking
+    Most version control systems do not provide any form of locking that would prevent two team members from running terraform apply on the same state file at the same time.
+    
+    - Secrets
+    All data in Terraform state files is stored in plain text. This is a problem because certain Terraform resources need to store sensitive data. For example, if you use the aws_db_instance
+    resource to create a database, Terraform will store the username and password for the database in a state file in plain text. Storing plain-text secrets anywhere is a bad idea
+
+    - USING GITHUB FOR SHARED STORAGE FOR STATE FILE IS A BASD IDEA INSTEAD YOU CAN USE `TERRAFORM REMOTE BACKENDS` :
+
+    __> Instead of using version control, the best way to manage shared storage for state files is to use Terraform’s built-in support for remote backends. A Terraform backend determines how Terraform loads and stores state. The default backend, which you’ve been using this entire time, is the local backend, 
+        which stores the state file on your local disk. Remote backends allow you to store the state file in a remote, shared store. A number of remote backends are supported, including Amazon S3; Azure Storage; Google Cloud Storage; and HashiCorp’s Terraform Cloud, Terraform Pro, and Terraform Enterprise.
+    
+    Remote backends solve all three of the issues just listed:
+    
+    - Manual error
+    After you configure a remote backend, Terraform will automatically load the state file from that backend every time you run plan or apply and it’ll automatically store the state file in that backend after each apply, so there’s no chance of manual error.
+    
+    - Locking
+    Most of the remote backends natively support locking. To run terraform apply, Terraform will automatically acquire a lock; if someone else is already running apply, they will already have the lock, and you will have to wait. You can run apply with the -lock-timeout=<TIME> parameter to instruct
+    Terraform to wait up to TIME for a lock to be released (e.g., - lock-timeout=10m will wait for 10 minutes).
+    
+    - Secrets
+    Most of the remote backends natively support encryption in transit and encryption at rest of the state file. Moreover, those backends usually expose ways to configure access permissions (e.g., using IAM policies with an Amazon S3 bucket), so you can control who has access to your state files and the secrets they might contain. It would be better still if Terraform natively supported encrypting secrets within the state file, but these remote backends reduce most of the security concerns, given that at least the state file isn’t stored in plain text on disk anywhere.
+
+    - Create Remote backend using amazon s3 :
+
+    ++ To enable remote state storage with Amazon S3, the first step is to create an S3 bucket. Create a main.tf file in a new folder (it should be a different folder from where you store the configurations of the cluster), and at the top of the file, specify AWS as the provider:
+
+    1- CREATE S3 BUCKET :
+
+    ```
+        resource "aws_s3_bucket" "terraform_state" {
+          bucket = "terraform-state"
+        
+          # Prevent accidental deletion of this S3 bucket
+          lifecycle {
+            prevent_destroy = true
+          }
+        
+          # Enable versioning so we can see the full revision history of our
+          # state files
+          versioning {
+            enabled = true
+          }
+        
+          server_side_encryption_configuration {
+            rule {
+              apply_server_side_encryption_by_default {
+                sse_algorithm = "AES256"
+              }
+            }
+          }
+        }
+    ```
+
+    - This code sets four arguments:
+
+    1- bucket
+    This is the name of the S3 bucket. Note that S3 bucket names must be globally unique among all AWS customers. Therefore, 
+    you will need to change the bucket parameter from "terraform-up-and-running-state" (which I already created) to your own name.3 
+    Make sure to remember this name and take note of what AWS region you’re using because you’ll need both pieces of information again a little later on.
+    
+    2- prevent_destroy
+    prevent_destroy is the second lifecycle setting you’ve seen (the first was create_before_destroy in Chapter 2). When you set prevent_destroy to true on a resource, 
+    any attempt to delete that resource (e.g., by running terraform destroy) will cause Terraform to exit with an error. This is a good way to prevent accidental 
+    deletion of an important resource, such as this S3 bucket, which will store all of your Terraform state. Of course, if you really mean to delete it, you can just comment that setting out.
+    
+    3- versioning
+    This block enables versioning on the S3 bucket so that every update to a file in the bucket actually creates a new version of that file. This allows you to see older 
+    versions of the file and revert to those older versions at any time.
+    
+    4- server_side_encryption_configuration
+    This block turns server-side encryption on by default for all data written to this S3 bucket. This ensures that your state files, and any secrets they might contain, 
+    are always encrypted on disk when stored in S3.
+
+    2- Create DynamoDB for locking (anti condition race) :
+
+    Next, you need to create a DynamoDB table to use for locking. DynamoDB is Amazon’s distributed key–value store. It supports strongly consistent reads 
+    and conditional writes, which are all the ingredients you need for a distributed lock system. Moreover, it’s completely managed, 
+    so you don’t have any infrastructure to run yourself, and it’s inexpensive, with most Terraform usage easily fitting into the free tier.
+    
+    To use DynamoDB for locking with Terraform, you must create a DynamoDB table that has a primary key called LockID (with this exact spelling and capitalization). 
+    You can create such a table using the aws_dynamodb_table resource:
+
+    ```
+        resource "aws_dynamodb_table" "terraform_locks" {
+          hash_key = "LockID"
+          name     = "terraform-locks"
+          billing_mode = "PAY_PER_REQUEST"
+          attribute {
+            name = "LockID"
+            type = "S"
+          }
+        }
+    ```
+
+    Run `terraform init` to download the provider code and then run `terraform apply` to deploy. 
+    Note: to deploy this code, your IAM User will need permissions to create S3 buckets and DynamoDB tables, as specified in “Setting Up Your AWS Account”.) After everything is deployed, you will have an S3 bucket and
+    DynamoDB table, but your Terraform state will still be stored locally. To configure Terraform to store the state in your S3 bucket (with encryption and locking), you need to add a backend configuration to your Terraform code. 
+    This is configuration for Terraform itself, so it resides within a terraform block, and has the following syntax:
+    
+    ```
+    terraform {
+      backend "<BACKEND_NAME>" {
+        [CONFIG...]
+      }
+    }
+    ```
+
+    where BACKEND_NAME is the name of the backend you want to use (e.g., "s3") and CONFIG consists of one or more arguments that are
+    specific to that backend (e.g., the name of the S3 bucket to use). Here’s what the backend configuration looks like for an S3 bucket:
+    
+    ```
+        terraform {
+          backend "s3" {
+            bucket = "terraform-state"
+            key = "global/s3/terraform.tfstate"
+            region = "us-east-2"
+        
+            dynamodb_table = "terraform_locks"
+            encrypt = true
+          }
+        }
+    ```
+        
+    - Explaining terraform params :
+    
+    + key
+    The file path within the S3 bucket where the Terraform state file should be written. You’ll see a little later on why the preceding example code sets this to global/s3/terraform.tfstate.
+    
+    + region
+    The AWS region where the S3 bucket lives. Make sure to replace this with the region of the S3 bucket you created earlier.
+    
+    + dynamodb_table
+    The DynamoDB table to use for locking. Make sure to replace this with the name of the DynamoDB table you created earlier.
+    
+    + encrypt
+    Setting this to true ensures that your Terraform state will be encrypted on disk when stored in S3. We already enabled default encryption in the S3 bucket itself, so this is here as a second layer to ensure that the data is always encrypted.
+        
+    NB: if you encounter a problem running `terraform init` and you want to rollback you can delete `.terraform` folder and rerun the previous command.
+    
+    NB2: the init command is idempotent, so it’s safe to run it over and over again
+
+    - NEXT : With this backend enabled, Terraform will automatically pull the latest state from this S3 bucket before running a command, and automatically push the latest state to the S3 bucket after running a command. To see this in action, 
+             add the following output variables:
+
+    NBBB : (Note how Terraform is now acquiring a lock before running apply and releasing the lock after!)
+    
+    ```
+        $ terraform apply
+        Acquiring state lock. This may take a few moments...
+
+    ```
+    
+    - if you refersh aws console you will see multiple versions of terraform.tfstate This means that Terraform 
+      is automatically pushing and pulling state data to and from S3, and S3 is storing every revision of the state file, 
+      which can be useful for debugging and rolling back to older versions if something goes wrong.
+    
+    ### SUPER IMPORTANT !
+
+    -- Limitations with Terraform’s Backends :
+
+    Terraform’s backends have a few limitations and gotchas that you need to be aware of. The first limitation is the chicken-and-egg 
+    situation of using Terraform to create the S3 bucket where you want to store your Terraform state. 
+    To make this work, you had to use a two-step process:
+
+    1. Write Terraform code to create the S3 bucket and DynamoDB table and deploy that code with a local backend.
+    2. Go back to the Terraform code, add a remote backend configuration to it to use the newly created S3 bucket and DynamoDB table, 
+       and run terraform init to copy your local state to S3.
+    
+    If you ever wanted to delete the S3 bucket and DynamoDB table, you’d have to do this two-step process in reverse:
+    1. Go to the Terraform code, remove the backend configuration, and rerun terraform init to copy the Terraform state back to your local disk.
+    2. Run terraform destroy to delete the S3 bucket and DynamoDB table.
+    
+    +++ but the good news is that dynamodb and s3 bucket configs are shared among all terraform code, that means you have write it once.
+    
+    one other limitation is more painful: the backend block in Terraform does not allow you to use any variables or references.
+
+    ```
+        # This will NOT work. Variables aren't allowed in a backend configuration.
+            terraform {
+              backend "s3" {
+                bucket         = var.bucket
+                region         = var.region
+                dynamodb_table = var.dynamodb_table
+                key            = "example/terraform.tfstate"
+            encrypt = true }
+            }
+    ```
+    
+    ## Partial configuration :
+    - The only solution available as of May 2019 is to take advantage of partial configuration, 
+      in which you omit certain parameters from the backend configuration in your Terraform code and instead pass
+        those in via -backend-config command-line arguments when calling terraform init. For example, you could extract the repeated backend arguments, 
+        such as bucket and region, into a separate file called backend.hcl:
+        Only the key parameter remains in the Terraform code, since you still need to set a different key value for each module:
+        
+        # backend.hcl
+        bucket = "terraform-up-and-running-state" 
+        region = "us-east-2"
+        dynamodb_table = "terraform-up-and-running-locks" 
+        encrypt = true
+
+        # Partial configuration. The other settings (e.g., bucket,
+        region) will be
+        # passed in from a file via -backend-config arguments to
+        'terraform init'
+        terraform {
+          backend "s3" {
+            key = "example/terraform.tfstate"
+          }
+        }
+        
+        To put all your partial configurations together, run terraform init with the -backend-config argument:
+          $ terraform init -backend-config=backend.hcl
+
+    2- Isolating State Files :
+
+    The whole point of having separate environments is that they are isolated from one another, 
+    so if you are managing all the environments from a single set of Terraform configurations, you are breaking that isolation.
+    
+
+![](./static/envs.png)
+    
+    - instead of defining all your environments in a single set of Terraform configurations (top), 
+      you want to define each environment in a separate set of configurations (bottom), so a problem 
+      in one environment is completely isolated from the others.
+    
+    - Isolation Types :
+
+    1- Isolation via workspaces
+        Useful for quick, isolated tests on the same configuration.
+    
+    2- Isolation via file layout
+        Useful for production use cases for which you need strong separation between environments.
+        
+    1- Isolation via workspaces :
+    $ run `terraform workspace show`
+        default
+
+    - when we don't specify a workspace for state file we already using default one.
+    
+    - Create a new workspace :
+    $ terraform workspace new example1
+    
+    Terraform wants to create a totally new EC2 Instance from scratch! That’s because the state files in each workspace 
+    are isolated from one another, and because you’re now in the example1 workspace, Terraform isn’t using the state file from the default workspace, 
+    and therefore, doesn’t see the EC2 Instance was already created there.
+
+    - terraform apply # to create resources
+    
+    + to list all workspaces :
+
+    $ terraform workspace list
+
+    ++ And you can switch between them at any time using the `terraform workspace select` command.
+
+    --> To understand how this works under the hood, take a look again in your S3 bucket; you should now see a new folder called env:
+    --> Inside the env: folder, you’ll find one folder for each of your workspaces
+    
+    ++ Very Important :
+
+    Inside each of those workspaces, Terraform uses the key you specified in your backend configuration, so you should find an
+    example1/workspaces-example/terraform.tfstate and an example2/workspaces-example/terraform.tfstate. In other words, switching to a 
+    different workspace is equivalent to changing the path where your state file is stored.
+    
+    ```
+        terraform {
+            backend "s3" {
+            # Replace this with your bucket name!
+            bucket         = "terraform-up-and-running-state"
+            key            = "workspaces-example/terraform.tfstate" #default one
+            --------------------------------------
+            for example1 --> example1/workspaces-example/terraform.tfstate
+    ```
+    
+    - The Purpose of using workspaces :
+
+    This is handy when you already have a Terraform module deployed, and you want to do some experiments with it (e.g., try to refactor the code), 
+    but you don’t want your experiments to affect the state of the already deployed infrastructure. Terraform workspaces allow you to run terraform 
+    workspace new and deploy a new copy of the exact same infrastructure, but storing the state in a separate file.
+    
+    In fact, you can even change how that module behaves based on the workspace you’re in by reading the workspace name using the expression terraform.workspace. 
+    For example, here’s how to set the Instance type to t2.medium in the default workspace and t2.micro in all other workspaces 
+
+    ```
+        resource "aws_instance" "example" {
+            ami = "ami-0c55b159cbfafe1f0" 
+            instance_type = terraform.workspace == "default" ? "t2.medium" : "t2.micro"
+        }
+    ```
+
+    NB: workspace startegy to isolate environments is not recommended in production uses instead you can use `file_layout`.
+    
+    2- Isolation via File Layout :
+
+    To acheive full isolation between environments, you need to do the following:
+    Put the Terraform configuration files for each environment into a separate folder. For example, all of the configurations for the staging environment 
+    can be in a folder called stage and all the configurations for the production environment can be in a folder called prod.
+    Configure a different backend for each environment, using different authentication mechanisms and access controls (e.g., each environment 
+    could live in a separate AWS account with a separate S3 bucket as a backend).
+        
+    -- > With this approach, the use of separate folders makes it much clearer which environments you’re deploying to, and the use of separate state files, 
+         with separate authentication mechanisms, makes it significantly less likely that a screw up in one environment can have any impact on another.
+
+    - Isolation in Component level :
+
+    In fact, you might want to take the isolation concept beyond environments and down to the “component” level, where a component is a coherent set of resources that you typically deploy together. 
+    For example, after you’ve set up the basic network topology for your infrastructure—in AWS lingo, your Virtual Private Cloud
+    (VPC) and all the associated subnets, routing rules, VPNs, and network ACLs—you will probably change it only once every few months, at most. On the other hand, you might deploy a new version of a web server 
+    multiple times per day. If you manage the infrastructure for both the VPC component and the web server component in the same set of Terraform configurations, you are unnecessarily putting your entire network 
+    topology at risk of breakage (e.g., from a simple typo in the code or someone accidentally running the wrong command) multiple times per day.
+
+    solution : Therefore, I recommend using separate Terraform folders (and therefore separate state files) for each environment (staging, production, etc.) and for each component (VPC, services, databases).
+
+![](./static/isolation-tree.png)
+
+    At the top level, there are separate folders for each “environment.” The exact environments differ for every project, but the typical ones are as follows:
+    stage
+    An environment for preproduction workloads (i.e., testing)
+    prod
+    An environment for production workloads (i.e., user-facing apps)
+    mgmt
+    An environment for DevOps tooling (e.g., bastion host, Jenkins)
+    global
+    
+    A place to put resources that are used across all environments (e.g., S3, IAM)
+    Within each environment, there are separate folders for each “component.” The components differ for every project, but here are the typical ones:
+    
+    vpc
+    The network topology for this environment.
+    services
+    The apps or microservices to run in this environment, such as a Ruby on Rails frontend or a Scala backend. Each app could even live in its own folder to isolate it from all the other apps.
+    data-storage
+    The data stores to run in this environment, such as MySQL or Redis. Each data store could even reside in its own folder to isolate it from all other data stores.
+
+    ++ AVOIDING COPY/PASTE
+    The file layout described in this section has a lot of duplication. For example, the same frontend-app and backend-app live in both the stage and prod folders. Don’t worry, you won’t need to copy and paste all of that code! In Chapter 4, 
+    you’ll see how to use Terraform modules to keep all of this code DRY.
+
     

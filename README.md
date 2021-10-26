@@ -1619,4 +1619,210 @@
     The file layout described in this section has a lot of duplication. For example, the same frontend-app and backend-app live in both the stage and prod folders. Don’t worry, you won’t need to copy and paste all of that code! In Chapter 4, 
     you’ll see how to use Terraform modules to keep all of this code DRY.
 
+![](./static/file_layout_cluster.png)
+
+    - Problems of file-layout :
+
+    There is another problem with this file layout: it makes it more difficult to use resource dependencies. If your app code was defined in the same Terraform configuration files as the database code, 
+    that app could directly access attributes of the database using an attribute reference (e.g., access the database address via aws_db_instance.foo.address). But if the app code and database code live 
+    in different folders, as I’ve recommended, you can no longer do that. Fortunately, Terraform offers a solution: the terraform_remote_state data source.
+    
+    1- The terraform_remote_state Data Source
+    In Chapter 2, you used data sources to fetch read-only information from AWS, such as the aws_subnet_ids data source, which returns a list of subnets in your VPC. There is another data source that is particularly useful 
+    when working with state: terraform_remote_state. You can use this data source to fetch the Terraform state file stored by another set of Terraform configurations in a completely read-only manner.
+    Let’s go through an example. Imagine that your web server cluster needs to communicate with a MySQL database. Running a database that is scalable, secure, durable, and highly available is a lot of work.
+     
+    Again, you can let AWS take care of it for you, this time by using Amazon’s Relational Database Service (RDS), as shown in Figure 3- 9. RDS supports a variety of databases, including MySQL, PostgreSQL, SQL Server, and Oracle.
+
+![](./static/cluster_with_mysql.png)
+
+    - Very Important :
+
+    You might not want to define the MySQL database in the same set of configuration files as the web server cluster, because you’ll be deploying updates to the web server cluster far more frequently and don’t want to risk accidentally breaking the database each time you do so. 
+    Therefore, your first step should be to create a new folder at stage/data-stores/mysql
+    
+    - code to create mysql db at Amazon RDS :
+
+    ```
+        provider "aws" {
+            region = "us-east-2"
+        }
+
+        resource "aws_db_instance" "example" {
+          identifier_prefix = "terraform-example"
+          engine = "mysql"
+          allocated_storage = 10 # 10 GB
+          instance_class = "db.t2.micro" # 1 CPU instance
+          name = "example_database"
+          username = "admin"
+        
+          # How we should set password
+          password = "???"
+        }
+    ```
+    2- Handling Secrets :
+    
+    - One option for handling secrets is to use a Terraform data source to read the secrets from a secret store. 
+      For example, you can store secrets, such as database passwords, in AWS Secrets Manager, which is a managed service   
+      AWS offers specifically for storing sensitive data. You could use the AWS Secrets Manager UI to store the secret and then 
+      read the secret back out in your Terraform code using the aws_secretsmanager_secret_version data source:
+    
+    - create data_source access for secrets in aws :
+        
+    ```
+        data "aws_secretsmanager_secret_version" "db_password" {
+            secret_id = "mysql-master-password-stage"
+        }
+    ```
+    
+    - replace `password = "???"` with password = data.aws_secretsmanager_secret_version.db_password.secret_string
+    ++ and set `db_password` secret in aws secret manager.
+
+    Or you can use `variables` for `db_password` without giving the default one 
+    
+    ```
+        variable "db_password" {
+            description = "The password for the database" 
+            type = string
+        }
+    ```
+    
+    Note that this variable does not have a default. This is intentional. You should not store your database password or any sensitive
+    information in plain text. Instead, you’ll set this variable using an environment variable.
+    As a reminder, for each input variable foo defined in your Terraform configurations, you can provide Terraform the value of this variable 
+    using the environment variable TF_VAR_foo. For the db_password input variable, here is how you can set the TF_VAR_db_password environment variable on Linux/Unix/OS X systems:
+    
+    Very Important : NOTE
+
+    ```
+         export TF_VAR_db_password="(YOUR_DB_PASSWORD)"  # Note that there is intentionally a space before the export command to prevent the secret from being stored on disk in your Bash history.
+        $ terraform apply
+    ```
+    
+    - Super Important Security Weakness in Terraform :
+
+    - SECRETS ARE ALWAYS STORED IN TERRAFORM STATE
+    Reading secrets from a secrets store or environment variables is a good practice to ensure secrets aren’t stored in plain text in your code, but just a reminder: no matter how you read in the secret, if you pass it as an argument to a Terraform resource, such as aws_db_instance, 
+    that secret will be stored in the Terraform state file, in plain text.
+    This is a known weakness of Terraform, with no effective solutions available, so be extra paranoid with how you store your state files (e.g., always enable encryption) and who can access those state files (e.g., use IAM permissions to lock down access to your S3 bucket)!
+    
+    ++ Secure access to the s3 buckets.
+
+    - Now to migrate state file of the mysql folder add this code :
+
+    ```
+        terraform {
+          backend "s3" {
+        
+            bucket         = "terraform-remote-state-example-test"
+            key            = "stage/data-stores/mysql/terraform.tfstate"
+            region         = "us-east-2"
+            # Replace this with your DynamoDB table name!
+            dynamodb_table = "terraform-locks-example-test"
+            encrypt = true
+          }
+        }
+    ```
+
+    Now that you have a database, how do you provide its address and port to your web server cluster? The first step is to add two output variables to stage/data-stores/mysql/outputs.tf:
+    
+    output "address" {
+      value       = aws_db_instance.example.address
+      description = "Connect to the database at this endpoint"
+    }
+    
+    output "port" {
+      value       = aws_db_instance.example.port
+      description = "The port the database is listening on"
+    }
+    
+    - run $ terraform apply
+    
+    Outputs:
+
+    address = "terraform-example20211025151148456400000001.ccsazawrysf8.us-east-2.rds.amazonaws.com"
+    port = 3306
+
+    ++ These outputs are now also stored in the Terraform state for the database, which is in your S3 bucket at the path stage/data- stores/mysql/terraform.tfstate. 
+        You can get the web server cluster code to read the data from this state file by adding the terraform_remote_state data source in stage/services/webserver-cluster/main.tf:
+
+    ```
+        data "terraform_remote_state" "db" {
+          backend = "s3"
+          config = {
+            bucket = "(YOUR_BUCKET_NAME)"
+            key    = "stage/data-stores/mysql/terraform.tfstate"
+            region = "us-east-2"
+            } 
+        }
+    ```
+
+    This `terraform_remote_state` data source configures the web server cluster code to read the state file from the same S3 bucket and folder where the database stores its state, AS SHOWN ABOVE :
+![](./static/write:read-remote-state-file.png)
+
+    - IF you have problem acquiring lock you can investigate and check processes currently running that clock acquiring one :
+
+    + run $ ps aux | grep terraform
+    + sudo kill -9 <process_id>
+
+    or use arg `-lock=false`
+
+    terraform apply -lock=false (it's not recommended)
+
+    - Read Amazon RDS remote_state_file attributes :
+    All of the database’s output variables are stored in the state file and you can read them from the terraform_remote_state data source using an attribute reference of the form:
+    -> data.terraform_remote_state.<NAME>.outputs.<ATTRIBUTE>
+
+    - For example, here is how you can update the User Data of the web server cluster Instances to pull the database address and port out of the terraform_remote_state data source and expose that information in the HTTP response:
+    ```
+        user_data = <<EOF
+        #!/bin/bash
+        echo "Hello, World" >> index.html
+        echo "${data.terraform_remote_state.db.outputs.address}" >> index.html
+        echo "${data.terraform_remote_state.db.outputs.port}" >> index.html
+        nohup busybox httpd -f -p ${var.server_port} &
+        EOF
+    ```
+
+    - second step is to create template with that bash script :
+
+    ```
+    data "template_file" "user_data" {
+        template = file("user-data.sh")
+    
+          vars = {
+            server_port = var.server_port
+            db_address  = data.terraform_remote_state.db.outputs.address
+            db_port     = data.terraform_remote_state.db.outputs.port
+          }
+    }
+    ```
+
+    and finally just add user_data field to aws_laucnh_configurationas following :
+
+    user_data = data.template_file.user_data.rendered
+    
+    
+    - you can this script for testing purposes :
+    
+    ```
+        #!/bin/bash
+
+        export db_address=12.34.56.78
+        export db_port=5555
+        export server_port=8080
+        
+        chmod u+x ./user-data.sh
+        
+        output=$(curl "http://localhost:$server_port")
+        
+        if [[ $output == *"Hello, World"* ]]; then
+          echo "Success! Got expected text from server."
+        else
+          echo "Error. Did not get back expected text 'Hello, World'."
+        fi
+    ```
+    
+    run $ bash  bash_unit_test.sh
+
     

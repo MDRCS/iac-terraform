@@ -2149,3 +2149,64 @@
     all the routing in production can be affected, too. Second, if an attacker gains access to one environment, they also have access to the other. If you’re making rapid changes in staging and accidentally leave a port exposed, any hacker that broke in 
     would not only have access to your staging data, but also your production data.
     Therefore, outside of simple examples and experiments, you should run each environment in a separate VPC. In fact, to be extra sure, you might even run each environment in totally separate AWS accounts.
+
+    6- Module Versionning :
+
+     - you can use github to host your modules and call them later on your current infra code :
+
+    ++  In all of the module examples you’ve seen so far, whenever you used a module, you set the source parameter of the module to a local file path. In addition to file paths, 
+        Terraform supports other types of module sources, such as Git URLs, Mercurial URLs, and arbitrary HTTP URLs.1 The easiest way to create a versioned module is to put the code for the module in a separate Git repository and to set the source parameter to that repository’s URL. That means your Terraform code will be spread out across (at least) two repositories:
+        
+        modules
+        This repo defines reusable modules. Think of each module as a “blueprint” that defines a specific part of your infrastructure.
+        live
+        This repo defines the live infrastructure you’re running in each environment (stage, prod, mgmt, etc.). Think of this as the “houses” you built from the “blueprints” in the modules repo.
+
+![](./static/repos-paths.png)
+
+    - First step is to create a repo called `foo` e.g and push modules folder to this repo 
+
+    ++ here is the commands to tag your first version :
+    
+    $ git tag -a "v0.0.1" -m "First release of webserver-cluster module"
+    $ git push --follow-tags
+    
+    ++ git push --follow-tags :
+    That won't push all the local tags though, only the one referenced by commits which are pushed with the git push.    
+    
+    - Example of second release tag :
+    
+    $ git tag -a "v0.0.2" -m "Second release of webserver-cluster"
+    -> source = "git@github.com:foo/modules.git//webserver-cluster?ref=v0.0.2
+
+    - second step is to import module from your git repo :    
+
+    +++ Release Process :
+
+    After v0.0.2 has been thoroughly tested and proven in staging, you can then update production, too. But if there turns out to be a bug in v0.0.2, 
+    no big deal, because it has no effect on the real users of your production environment. Fix the bug, release a new version, and repeat the entire 
+    process again until you have something stable enough for production.
+    
+    ++ Semantic Versionning :
+
+    - MAJOR version when you make incompatible API changes,
+    - MINOR version when you add functionality in a backward-compatible manner
+    - PATCH version when you make backward-compatible bug fixes.
+
+    ```
+        module "webserver_cluster" {
+            source = "github.com/foo/modules//webserver-cluster?ref=v0.0.1" # the double slash is required
+            cluster_name = "webservers-stage"
+            .....
+    ```
+
+    - PRIVATE GIT REPOS
+    If your Terraform module is in a private Git repository, to use that repo as a module source, you need to give Terraform a way to authenticate to that Git repository. 
+    I recommend using SSH auth so that you don’t need to hardcode the credentials for your repo in the code itself. With SSH authentication, each developer can create an SSH key, 
+    associate it with their Git user, and add it to ssh-agent, and Terraform will automatically use that key for authentication if you use an SSH source URL.2
+
+    - Right now you can .. :
+
+    For example, you could create a canonical module that defines how to deploy a single microservice—including how to run a cluster, 
+    how to scale the cluster in response to load, and how to distribute traffic requests across the cluster—and each team could use 
+    this module to manage their own microservices with just a few lines of code.

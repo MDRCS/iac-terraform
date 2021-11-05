@@ -3,6 +3,7 @@ provider "aws" {
 }
 
 module "webserver-cluster" {
+  # source = "github.com/brikis98/terraform-up-and-running-code//code/terraform/04-terraform-module/module-example/modules/services/webserver-cluster?ref=v0.1.0"
   source = "../../../../modules/services/webserver-cluster"
   cluster_name = "webserver-prod"
   instance_type = "m4.large" # prod != staging (you can use t2.micro)

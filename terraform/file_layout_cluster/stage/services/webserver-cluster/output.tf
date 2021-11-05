@@ -4,6 +4,12 @@
 #  sensitive = false
 #}
 
+output "alb_dns_name" {
+  value = aws_alb.example.dns_name
+  description = "The domain name of the load balancer"
+
+}
+
 output "ip_address" {
   value = data.terraform_remote_state.db.outputs.address
   description = "Database's ip address"

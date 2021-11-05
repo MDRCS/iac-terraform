@@ -10,7 +10,7 @@ provider "aws" {
   region = "us-east-2"
 }
 
-resource "aws_lb" "example" {
+resource "aws_alb" "example" {
   name = "terraform-asg-example"
   load_balancer_type = "application"
   subnets = data.aws_subnet_ids.default.ids
@@ -18,7 +18,7 @@ resource "aws_lb" "example" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.example.arn
+  load_balancer_arn = aws_alb.example.arn
   port = 80
   protocol = "HTTP"
 
@@ -167,8 +167,3 @@ data "terraform_remote_state" "db" {
 }
 
 
-output "alb_dns_name" {
-  value = aws_lb.example.dns_name
-  description = "The domain name of the load balancer"
-
-}

@@ -1981,6 +1981,171 @@
     A powerful feature of ASGs is that you can configure them to increase or decrease the number of servers you have running in response to load. 
     One way to do this is to use a scheduled action, which can change the size of the cluster at a scheduled time during the day. 
     For example, if traffic to your cluster is much higher during normal business hours, you can use a scheduled action to increase the number of servers at 9 a.m. and decrease it at 5 p.m.
+    
+    + to Schedule Scaling out/in only in prod environment use `aws_autoschedule_action` resource as code below :
+
+    ```
+        resource "aws_autoscaling_schedule" "scale_out_during_business_hours" {
+          scheduled_action_name  = "scale-out-during-business-hours"
+          min_size = 2
+          max_size = 10
+          desired_capacity = 10
+          recurrence = "0 9 * * *" # cron job code means 9 am everyday
+        }
+
+        resource "aws_autoscaling_schedule" "scale_in_at_night" {
+          scheduled_action_name  = "scale-oin-at-night"
+          min_size = 2
+          max_size = 10
+          desired_capacity = 2
+          recurrence = "0 17 * * *" # cron job code means 5 pm everyday
+        }
+    ```
+
+    +++ However, both usages of aws_autoscaling_schedule are missing a required parameter, autoscaling_group_name, which specifies the name of the ASG. 
+        The ASG itself is defined within the webserver-cluster module.
+    
+    - To create asg name output variable use this code in the module :
+
+        output "asg_name" {
+          value = aws_autoscaling_group.example.name
+          description = "Auto scaling group's name"
+        }
+    
+    - To access this variable from prod env :
+
+    -> module.<MODULE_NAME>.<OUTPUT_NAME>
+    
+    For out case add this arg : `autoscaling_group_name = module.webserver-cluster.asg_name`
+
+    5- Module Gotachs
+    
+    5-1 File Path :
+    
+    File path is a feature in terraform to get the relative path to a script or a module in reference to module, root, or cwd (current working directory)
+    
+    Terraform supports the following types of path references:
+    
+    path.module
+    Returns the filesystem path of the module where the expression is defined.
+    
+    path.root
+    Returns the filesystem path of the root module.
+    
+    path.cwd
+    Returns the filesystem path of the current working directory. In normal use of Terraform this is the same as path.root, but
+    
+    for example for template of user_data bash script we want to have a path related to module this is why the code should be like :
+
+    ```
+        data "template_file" "user_data" {
+          template = file("${path.module}/user-data.sh")
+        
+          vars = {
+            server_port = var.server_port
+            db_address  = data.terraform_remote_state.db.outputs.address
+            db_port     = data.terraform_remote_state.db.outputs.port
+          }
+        }
+    ```
+
+    5-2 Inline Blocks :
+
+    The configuration for some Terraform resources can be defined either as inline blocks or as separate resources. When creating a module, 
+    you should always prefer using a separate resource.
+    For example, the aws_security_group resource allows you to define ingress and egress rules via inline blocks
+    
+    - From Inline Blocks    
+
+    ```
+        resource "aws_security_group" "alb" {
+          name = "${var.cluster_name}-security-alb"
+        
+          # Allow inbound HTTP requests
+          ingress {
+            from_port = local.http_port
+            protocol  = local.tcp_protocol
+            to_port   = local.http_port
+            cidr_blocks = local.all_ips # you can use any IP address
+          }
+        
+          # Allow all outbound requests
+        
+          egress {
+            from_port = local.any_port
+            protocol  = local.any_protocol
+            to_port   = local.any_port
+            cidr_blocks = local.all_ips
+          }
+        
+        }
+    ```
+
+    - to separate resources :
+
+    ```
+    resource "aws_security_group" "alb" { 
+        name = "${var.cluster_name}-alb"
+    }
+
+    resource "aws_security_group_rule" "allow_http_inbound" { 
+        type = "ingress"
+        security_group_id = aws_security_group.alb.id
+        from_port = local.http_port
+        to_port = local.http_port
+        protocol = local.tcp_protocol
+        cidr_blocks = local.all_ips
+    }
+
+    resource "aws_security_group_rule" "allow_all_outbound" { 
+        type = "egress"
+        security_group_id = aws_security_group.alb.id
+        from_port = local.any_port
+        to_port = local.any_port
+        protocol = local.any_protocol
+        cidr_blocks = local.all_ips
+    }
+
+    ```
+
+    NB: If you try to use a mix of both inline blocks and separate resources, you will get errors where routing rules conflict and overwrite one another. 
+        Therefore, you must use one or the other. Because of this limitation, when creating a module, you should always try to use a separate resource instead of the inline block.
+        Otherwise, your module will be less flexible and configurable.
 
     
+    - Add Custom Rules :
+
+    For example, if all the ingress and egress rules within the webserver-cluster module are defined as separate aws_security_group_rule resources, you can make the module flexible enough to allow users to add custom rules from outside the module. 
+    To do that, you export the ID of the aws_security_group as an output variable in   
     
+    # Module level
+    ```
+        output "alb_security_group_id" {
+            value = aws_security_group.alb.id
+            description = "The ID of the Security Group attached to the load balancer"
+    }
+    ```
+
+    ```
+        resource "aws_security_group" "allow_testing_inbound" {
+              type = ingress
+              security_group_id = module.webserver-cluster.alb_security_group_id
+              from_port = 12345
+              to_port = 12345
+              protocol = "tcp"
+              cidr_blocks = ["0.0.0.0/0"]
+        }
+    ```
+
+    NB: you could not define security_group_rules in `inline block` way, your code should be consistent all separate or all inline blocks.
+
+    +++ Network Isolation :
+
+    The examples in this chapter create two environments that are isolated in your Terraform code, as well as isolated in terms of having separate load balancers, 
+    servers, and databases, but they are not isolated at the network level. To keep all the examples in this book simple, all of the resources deploy into the same 
+    Virtual Private Cloud (VPC). This means that a server in the staging environment can communicate with a server in the production environment, and vice versa.    
+    
+    In real-world usage, running both environments in one VPC opens you up to two risks. First, a mistake in one environment could affect the other. For example, if you’re making changes in staging and accidentally mess up the configuration of the route tables, 
+    all the routing in production can be affected, too. Second, if an attacker gains access to one environment, they also have access to the other. If you’re making rapid changes in staging and accidentally leave a port exposed, any hacker that broke in 
+    would not only have access to your staging data, but also your production data.
+    Therefore, outside of simple examples and experiments, you should run each environment in a separate VPC. In fact, to be extra sure, you might even run each environment in totally separate AWS accounts.

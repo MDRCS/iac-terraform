@@ -1,11 +1,3 @@
-
-# Calling the same code but from another module :
-
-#module "webserver-cluster" {
-#  source = "../../../../modules/services/webserver-cluster"
-#}
-
-
 provider "aws" {
   region = "us-east-2"
 }
@@ -19,7 +11,7 @@ resource "aws_lb" "example" {
 
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.example.arn
-  port = 80
+  port = local.http_port
   protocol = "HTTP"
 
   # By default, return a simple 404 page
@@ -70,23 +62,23 @@ resource "aws_alb_target_group" "asg" {
 }
 
 resource "aws_security_group" "alb" {
-  name = "terraform-example-alb"
+  name = "${var.cluster_name}-alb"
 
   # Allow inbound HTTP requests
   ingress {
-    from_port = 80
-    protocol  = "tcp"
-    to_port   = 80
-    cidr_blocks = ["0.0.0.0/0"] # you can use any IP address
+    from_port = local.http_port
+    protocol  = local.tcp_protocol
+    to_port   = local.http_port
+    cidr_blocks = local.all_ips # you can use any IP address
   }
 
   # Allow all outbound requests
 
   egress {
-    from_port = 0
-    protocol  = "-1"
-    to_port   = 0
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port = local.any_port
+    protocol  = local.any_protocol
+    to_port   = local.any_port
+    cidr_blocks = local.all_ips
   }
 
 }
@@ -103,7 +95,7 @@ data "template_file" "user_data" {
 
 resource "aws_launch_configuration" "example" {
   image_id = "ami-0c55b159cbfafe1f0"
-  instance_type = "t2.micro"
+  instance_type = var.instance_type
   security_groups = [aws_security_group.instance.id]
   user_data = data.template_file.user_data.rendered
 
@@ -118,8 +110,8 @@ resource "aws_autoscaling_group" "example" {
   vpc_zone_identifier = data.aws_subnet_ids.default.ids
   target_group_arns = [aws_alb_target_group.asg.arn]
   health_check_type = "ELB"
-  min_size = 2
-  max_size = 10
+  min_size = var.min_size
+  max_size = var.max_size
 
   tag {
     key     = "Name"
@@ -129,21 +121,21 @@ resource "aws_autoscaling_group" "example" {
 }
 
 resource "aws_security_group" "instance" {
-  name = "terraform-example-instance"
+  name = "${var.cluster_name}-instance"
 
   ingress {
     from_port = var.server_port
     to_port = var.server_port
-    protocol = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    protocol = local.tcp_protocol
+    cidr_blocks = local.all_ips
   }
 
   # Allow all outbound requests
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port   = local.any_port
+    to_port     = local.any_port
+    protocol    = local.any_protocol
+    cidr_blocks = local.all_ips
   }
 }
 
@@ -159,8 +151,8 @@ data "terraform_remote_state" "db" {
   backend = "s3"
 
   config = {
-    bucket = "terraform-remote-state-example-test"
-    key = "stage/data-stores/mysql/terraform.tfstate" # link webservers with mysql db
+    bucket = var.db_remote_state_bucket # "terraform-remote-state-example-test"
+    key =  var.db_remote_state_key # "stage/data-stores/mysql/terraform.tfstate" # link webservers with mysql db
     region = "us-east-2"
   }
 
@@ -171,4 +163,12 @@ output "alb_dns_name" {
   value = aws_lb.example.dns_name
   description = "The domain name of the load balancer"
 
+}
+
+locals {
+  http_port    = 80
+  any_port     = 0
+  any_protocol = "-1"
+  tcp_protocol = "tcp"
+  all_ips      = ["0.0.0.0/0"]
 }

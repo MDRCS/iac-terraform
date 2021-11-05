@@ -1825,4 +1825,162 @@
     
     run $ bash  bash_unit_test.sh
 
+    - There is a helpful tool called `console` you can use it to debug you code get a variable value:
+    
+    $ terraform console (it work with isolation so have only one terraform.tfstate that you could use to get values.)
+
+## Chapter 4 : How to create reusable infrastructure using terraform modules :
+
+    - Staging/Production Environments :
+
+    This works great as a first environment, but you typically need at least two environments: one for your team’s internal testing (“staging”) and one that real users can access (“production”), 
+    the two environments are nearly identical, though you might run slightly fewer/smaller servers in staging to save money.
+
+![](./static/staging:production-envs.png)
+
+    - Problem - How to Avoid Copy/Paste code from staging folder to prod one :
+
+    How do you add this production environment without having to copy and paste all of the code from staging? For example, how do you avoid having to copy and paste all the code in 
+    stage/services/webserver-cluster into prod/services/webserver-cluster and all the code in stage/data-stores/mysql into prod/data- stores/mysql?
+
+    ++ In a general-purpose programming language such as Ruby, if you had the same code copied and pasted in several places, you could put that code inside of a function and reuse that function everywhere.
+
+    - Solution - Terraform Modules :    
+
+    --> With Terraform, you can put your code inside of a Terraform module and reuse that module in multiple places throughout your code.
+
+    +++ Instead of having the same code copied and pasted in the staging and production environments, you’ll be able to have both environments reuse code from the same module
+    
+![](./static/terraform-modules.png)
+
+    - Finally :
+
+    This is a big deal. Modules are the key ingredient to writing reusable, maintainable, and testable Terraform code. Once you start using them, there’s no going back. You’ll start building everything as a module, 
+    creating a library of modules to share within your company, using modules that you find online, and thinking of your entire infrastructure as a collection of reusable modules.
+
+    1- Module Basics :
+
+    + As an example, let’s turn the code in stage/services/webserver-cluster, which includes an Auto Scaling Group (ASG), Application Load Balancer (ALB), security groups, and many other resources, into a reusable module.
+
+    1-1 First step is to move files under stage/services/webserver-cluster to modules/services/webserver-cluster
+    1-2 Open up the main.tf file in modules/services/webserver-cluster and remove the provider definition. Providers should be configured by the user of the module and not by the module itself.
+
+    - You can now make use of this module in the staging environment. Here’s the syntax for using a module:
+
+    ```
+        # Calling the same code but from another module :
+        provider "aws" {
+          region = "us-east-2"
+        }
+        
+        module "webserver-cluster" {
+          source = "../../../../modules/services/webserver-cluster"
+        }
+    ```
+
+    NB: Note that whenever you add a module to your Terraform configurations or modify the source parameter of a module, 
+        you need to run the init command before you run plan or apply.
+
+    - Problem - Avoid using hardcoded component names :
+
+    Before you run the apply command on this code, be aware that there is a problem with the webserver-cluster module: all of
+    the names are hardcoded. That is, the name of the security groups, ALB, and other resources are all hardcoded, 
+    so if you use this module more than once, you’ll get name conflict errors. Even the database details are hardcoded because 
+    the main.tf file you copied into modules/services/webserver-cluster is using a terraform_remote_state data source to figure out the
+    database address and port, and that terraform_remote_state is hardcoded to look at the staging environment.
+    To fix these issues, you need to add configurable inputs to the webserver-cluster module so that it can behave differently in different environments.
+
+    2- Module Inputs :
+    
+    - Create those Input variables :
+    
+    ```
+    variable "cluster_name" {
+      description = "The name to use for all the cluster resources"
+      type = string
+    }
+
+    variable "db_remote_state_bucket" {
+      description = "The name of the S3 bucket for the database's remote state"
+      type = string
+    }
+    
+    variable "db_remote_state_key" {
+      description = "The path for the database's remote state in S3"
+      type = string
+    }
+    ```
+
+    + Change those variables in main.tf (module) :
+
+    ```
+        resource "aws_security_group" "alb" { 
+            name = "${var.cluster_name}-alb"
+            .....
+
+        
+    ```
+
+    + You’ll need to make a similar change to the other aws_security_group resource (e.g., give it the name "${var.cluster_name}-instance"), 
+    the aws_alb resource, and the tag section of the aws_autoscaling_group resource.    
+
+    --> You should also update the terraform_remote_state data source to use the db_remote_state_bucket and db_remote_state_key as its bucket and key parameter, respectively
+
+    
+    ```
+        data "terraform_remote_state" "db" {
+          backend = "s3"
+            config = {
+                bucket = var.db_remote_state_bucket
+                key    = var.db_remote_state_key
+                region = "us-east-2"
+              }
+        }
+    ```
+
+    +++ Now to set those variables in prod environment you can include them in module calling func :
+
+    ```
+        module "webserver-cluster" {
+          source = "../../../../modules/services/webserver-cluster"
+          cluster_name = "webservers-prod"
+          db_remote_state_bucket = "prod-cluster-s3-bucket"
+          db_remote_state_key = "prod/data-stores/mysql/terraform.tfstate"
+        }
+    ```
+
+    + Among those variables we can add more inputs to configure our infrastructure :
+    
+    ++  in staging, you might want to run a small web server cluster to save money, but in production, 
+        you might want to run a larger cluster to handle lots of traffic. 
+
+
+    3- Module Locals :
+
+    Using input variables to define your module’s inputs is great, but what if you need a way to define a variable 
+    in your module to do some intermediary calculation, or just to keep your code DRY, but you don’t want to expose 
+    that variable as a configurable input? For example, the load balancer in the webserver-cluster module in modules/services/webserver-cluster/main.tf 
+    listens on port 80, the default port for HTTP. This port number is currently copied and pasted in multiple places.
+
+    in this case we will use `Locals` :
+    
+    ```
+        locals {
+          http_port    = 80
+          any_port     = 0
+          any_protocol = "-1"
+          tcp_protocol = "tcp"
+          all_ips      = ["0.0.0.0/0"]
+        }
+    ```
+
+    to call a local use this syntax -> local.<NAME>
+
+    4- Module Outputs :
+
+    A powerful feature of ASGs is that you can configure them to increase or decrease the number of servers you have running in response to load. 
+    One way to do this is to use a scheduled action, which can change the size of the cluster at a scheduled time during the day. 
+    For example, if traffic to your cluster is much higher during normal business hours, you can use a scheduled action to increase the number of servers at 9 a.m. and decrease it at 5 p.m.
+
+    
     

@@ -4,6 +4,18 @@ variable "server_port" {
   default = 8080
 }
 
+variable "ami" {
+  description = "image id of the ami used for webservers"
+  default = "ami-0c55b159cbfafe1f0"
+  type = string
+}
+
+variable "server_text" {
+  description = "the text webserver should return"
+  default = "Hello, world"
+  type = string
+}
+
 variable "cluster_name" {
   description = "The name to use for all the cluster resources"
   type = string

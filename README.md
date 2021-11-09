@@ -2210,3 +2210,224 @@
     For example, you could create a canonical module that defines how to deploy a single microservice—including how to run a cluster, 
     how to scale the cluster in response to load, and how to distribute traffic requests across the cluster—and each team could use 
     this module to manage their own microservices with just a few lines of code.
+
+## Chapter 5. Terraform Tips and Tricks: Loops, If- Statements, Deployment, and Gotchas :
+
+    + Terradorm Syntax For loops, if-statements others .. :
+
+    1- Loops :
+    Terraform offers several different looping constructs, each intended to be used in a slightly different scenario:
+    
+    - count parameter, to loop over resources
+    - for_each expressions, to loop over resources and inline blocks within a resource
+    - for expressions, to loop over lists and maps
+    - for string directive, to loop over lists and maps within a string
+
+    ++ What if you want to create three IAM users? 
+
+    ```
+        for (i = 0; i < 3; i++) {
+            resource "aws_iam_user" "example" { 
+                name = "neo"
+            } 
+        }
+    ```
+
+    ++ The example above won't work instead you can use `count` :
+
+    ```
+        resource "aws_iam_user" "example" { 
+            count = 3
+            name = "neo"
+        }
+    ```
+
+    One problem with this code is that all three IAM users would have the same name, which would cause an error, since usernames must be unique. 
+    If you had access to a standard for-loop, you might use the index in the for-loop, i, to give each user a unique name:
+
+    ```
+        # This is just pseudo code. It won't actually work in Terraform.
+        for (i = 0; i < 3; i++) {
+            resource "aws_iam_user" "example" { 
+                name = "neo.${i}"
+            } 
+        }
+    ```
+
+    To accomplish the same thing in Terraform, you can use count.index to get the index of each “iteration” in the “loop”:
+
+    ```
+        resource "aws_iam_user" "example" { 
+            count = 3
+            name = "neo.${count.index}"
+        }
+    ```
+
+    ++ You can customize more names of  each user by creating a variable :
+
+    ```
+        variable "user_names" {
+            description = "Create IAM users with these names" 
+            type = list(string)
+            default = ["neo", "trinity", "morpheus"]
+        }
+    ```
+    
+    ```
+        resource "aws_iam_user" "example" { 
+            count = length(vars.user_names)
+            name = vars.user_names[count.index]
+        }
+    ```
+
+    ++ if you want for example to get arn of an iam user :
+
+    ```
+        output "neo_arn" {
+            value       = aws_iam_user.example[0].arn
+            description = "The ARN for user Neo"
+        }
+    ```
+
+    - and if you want to show arn for all iam users use star `*`:
+    
+    ```
+        output "neo_arn" {
+            value       = aws_iam_user.example[*].arn
+            description = "The ARNs for all users"
+        }
+    ```
+
+    ++ `COUNT` Limitations :
+
+    - although you can use count to loop over an entire resource, you can’t use count within a resource to loop over inline blocks.
+
+    2- Loops with for_each Expressions :
+    - The for_each expression allows you to loop over lists, sets, and maps to create either (a) multiple copies of an entire resource, or (b) multiple copies of an inline block within a resource.
+
+    - Expression to create 3 iam_users using variable that containt a list of 3 names :
+
+    ```
+    resource "aws_iam_user" "example" { 
+        for_each = toset(var.user_names) 
+        name = each.value
+    }
+    ```
+    
+    - to output all values of each iam_user :
+    
+    ```
+        output "all_users" {
+            value = aws_iam_user.example
+        }
+    ```
+
+    ++ Result :
+    
+    ```
+        all_users = {
+              "morpheus" = {
+                "arn" = "arn:aws:iam::123456789012:user/morpheus"
+                "force_destroy" = false
+                "id" = "morpheus"
+                "name" = "morpheus"
+            "path" = "/"
+            "tags" = {} }
+              "neo" = {
+                "arn" = "arn:aws:iam::123456789012:user/neo"
+                "force_destroy" = false
+                "id" = "neo"
+                "name" = "neo"
+                "path" = "/"
+                "tags" = {}
+              }
+              "trinity" = {
+                "arn" = "arn:aws:iam::123456789012:user/trinity"
+                "force_destroy" = false
+                "id" = "trinity"
+                "name" = "trinity"
+                "path" = "/"
+                "tags" = {}
+                ...
+    ```
+
+    ++ to output only arn of all iam_users :
+
+    ```
+        output "all_arns" {
+            value = values(aws_iam_user.example)[*].arn
+        }
+    ```
+
+    NB: it's better to use `foreach` than `count` cuz if you want to delete a resource in `count` for example trinity
+        the list of iam_users will shift by one place and terraform apply command will create all resources the opposite of 
+        `foreach` when deleting an iam_user is name, it will delete only that user.
+
+    3- Zero-Downtime Deployment :
+
+    + how do you deploy a new Amazon Machine Image (AMI) across the cluster? 
+      And how do you do it without causing downtime for your users?
+
+    - The example below show how we can change user_data text for ami intances with zero-downtime :
+    
+    - first we need to make server_text dynamic with changing text :
+
+    ```
+        variable "ami" {
+          description = "image id of the ami used for webservers"
+          default = "ami-0c55b159cbfafe1f0"
+          type = string
+        }
+
+        variable "server_text" {
+          description = "the text webserver should return"
+          default = "Hello, world"
+          type = string
+        }
+    ```
+
+    - second step is to update ASG aka aws_autoscaling_group config as following :
+
+    
+    resource "aws_autoscaling_group" "example" {
+        ....
+      name = "${var.cluster_name}-${aws_launch_configuration.example.name}"
+      min_elb_capacity = var.min_size  # we should make sure that minumum 2 ec2 instances are created and healthy before destroying
+    
+      lifecycle {
+            create_before_destroy = true # zero downtime # we should create ec2 instances before detroying old ones
+      }
+        ....
+    }
+
+    - finally to test changes with new `server_text` :
+
+    $ while true; do curl http://<load_balancer_url>; sleep 1;
+
+    ## If something went wrong :
+
+    ++ if something went wrong during the deployment, Terraform will automatically roll back. For example, if there were a bug in v2 of your app and it failed to boot, 
+       the Instances in the new ASG will not register with the ALB. Terraform will wait up to wait_for_capacity_timeout (default is 10 minutes) for min_elb_capacity servers 
+       of the v2 ASG to register in the ALB, after which it considers the deployment a failure, deletes the v2 ASG, and exits with an error (meanwhile, v1 of your app continues to run just fine in the original ASG).
+
+    + Terraform Gotchas :
+
+    1- count and for_each limitations :
+
+    YOU CANNOT USE COUNT OR FOR_EACH WITHIN A MODULE CONFIGURATION
+    Something that you might be tempted to try is to use the count parameter within a module configuration:
+    
+    module "count_example" {
+        source = "../../../../modules/services/webserver-cluster"
+        count = 3
+        cluster_name  = "terraform-up-and-running-example"
+        server_port   = 8080
+        ...
+    }
+
+    ### NB: Zero-Downtime Deployment Has Limitations :
+    Using create_before_destroy with an ASG is a great technique for zero-downtime deployment, but there is one limitation: it doesn’t work with auto scaling policies. Or, to be more accurate, it resets your ASG size back to its min_size after each deployment, 
+    which can be a problem if you had used auto scaling policies to increase the number of running servers.
+
+    For example, the webserver-cluster module includes a couple of aws_autoscaling_schedule resources that increase the
+    number of servers in the cluster from 2 to 10 at 9 a.m. If you ran a deployment at, say, 11 a.m., the replacement ASG would boot up with only 2 servers, rather than 10, and it would stay that way until 9 a.m. the next day.

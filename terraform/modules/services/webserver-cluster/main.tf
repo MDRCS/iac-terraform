@@ -90,11 +90,12 @@ data "template_file" "user_data" {
     server_port = var.server_port
     db_address  = data.terraform_remote_state.db.outputs.address
     db_port     = data.terraform_remote_state.db.outputs.port
+    server_text = var.server_text
   }
 }
 
 resource "aws_launch_configuration" "example" {
-  image_id = "ami-0c55b159cbfafe1f0"
+  image_id = var.ami
   instance_type = var.instance_type
   security_groups = [aws_security_group.instance.id]
   user_data = data.template_file.user_data.rendered
@@ -106,6 +107,7 @@ resource "aws_launch_configuration" "example" {
 }
 
 resource "aws_autoscaling_group" "example" {
+  name = "${var.cluster_name}-${aws_launch_configuration.example.name}"
   launch_configuration = aws_launch_configuration.example.name
   vpc_zone_identifier = data.aws_subnet_ids.default.ids
   target_group_arns = [aws_alb_target_group.asg.arn]
@@ -113,9 +115,15 @@ resource "aws_autoscaling_group" "example" {
   min_size = var.min_size
   max_size = var.max_size
 
+  min_elb_capacity = var.min_size  # we should make sure that minumum 2 ec2 instances are created and healthy before destroying
+
+  lifecycle {
+    create_before_destroy = true # zero downtime # we should create ec2 instances before detroying old ones
+  }
+
   tag {
     key     = "Name"
-    value   = "terraform-asg-example"
+    value   = var.cluster_name
     propagate_at_launch = true
   }
 }

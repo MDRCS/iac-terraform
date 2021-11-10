@@ -2541,4 +2541,21 @@
     
     $ cloud-nuke aws --older-than 48h
 
-    
+    - Tricks and hacks :
+
+    + keep you terraform code clean :
+
+    $ terraform fmt main.tf
+    $ terraform fmt -recursive webserver-cluster/  # run it over a folder.
+
+    + Generate documentation of terraform modules :
+
+    $ brew install terraform-docs
+    $ terraform-docs markdown webserver-cluster/
+
+    + show infrastructure details :
+
+    $ terraform show
+
+    + show syntax errors :
+    $ terraform refresh

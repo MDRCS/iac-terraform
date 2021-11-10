@@ -2428,6 +2428,117 @@
     ### NB: Zero-Downtime Deployment Has Limitations :
     Using create_before_destroy with an ASG is a great technique for zero-downtime deployment, but there is one limitation: it doesn’t work with auto scaling policies. Or, to be more accurate, it resets your ASG size back to its min_size after each deployment, 
     which can be a problem if you had used auto scaling policies to increase the number of running servers.
+    
+    + Problem :
 
     For example, the webserver-cluster module includes a couple of aws_autoscaling_schedule resources that increase the
     number of servers in the cluster from 2 to 10 at 9 a.m. If you ran a deployment at, say, 11 a.m., the replacement ASG would boot up with only 2 servers, rather than 10, and it would stay that way until 9 a.m. the next day.
+
+    + Solution :
+
+    Change the recurrence parameter on the aws_autoscaling_schedule from 0 9 * * *, which means “run at 9 a.m.” to something like 0-59 9-17 * * *, which means “run every minute from 9 a.m. to 5 p.m.” If the ASG already has 10 servers, rerunning this auto scaling policy will have no effect, 
+    which is just fine; but if the ASG was just deployed, running this policy ensures that the ASG won’t be around for more than a minute before the number of Instances is increased to 10. This approach is a bit of a hack, and the big jump from 10 servers to 2 servers back to 10 servers can 
+    still cause issues for your users.
+
+## Chapter 6. Production-Grade Terraform Code :
+
+    I’ve had the opportunity to work with hundreds of companies, and based on all of these experiences, here’s roughly how long you should expect your next production-grade infrastructure project to take:
+    
+    If you want to deploy a service fully managed by a third party, such as running MySQL using the AWS Relational Database Service (RDS), you can expect it to take you one to tow weeks to get that service ready for production.
+    If you want to run your own stateless distributed app, such as a cluster of Node.js apps that don’t store any data locally
+    (e.g., they store all their data in RDS) running on top of an AWS Auto Scaling Group (ASG), that will take roughly twice as long, 
+    or about two to four weeks to get ready for production.
+
+    If you want to run your own stateful distributed app, such as an Amazon Elasticsearch (Amazon ES) cluster that runs on top of an ASG and stores data on local disks, that will be another order of magnitude increase, or about two to four months to get ready for production.
+    If you want to build out your entire architecture, including all of your apps, data stores, load balancers, monitoring, alerting, security, and so on, that’s another order of magnitude (or two) increase, or about 6 to 36 months of work, 
+    with small companies typically being closer to six months and larger companies typically taking several years.
+
+![](./static/production-grade-infra-time.png) 
+
+    In this chapter, I’ll go over why it takes so long to build production- grade infrastructure, what production grade really means, and what patterns work best for creating reusable, production-grade modules:
+
+    Why it takes so long to build production-grade infrastructure The production-grade infrastructure checklist Production-grade infrastructure modules
+    
+    + Small modules 
+    + Composable modules
+    + Testable modules
+    + Releasable modules
+    + Beyond Terraform modules
+
+    ++ The Production-Grade Infrastructure Checklist :
+
+![](./static/production-grade-checklist.png)
+
+    ++ new modules ordering to chunk big modules to small ones more manageable and more secure :
+
+    The webserver-cluster module you’ve built up to this point is starting to become a bit large, and it’s handling three somewhat unrelated tasks:
+    `Auto Scaling Group (ASG)`
+    The webserver-cluster module deploys an ASG that can do a zero-downtime, rolling deployment.
+    `Application Load Balancer (ALB)`
+    The webserver-cluster deploys an ALB.
+    `Hello, World app`
+    The webserver-cluster module also deploys a simple “Hello, World” app.
+    Let’s refactor the code accordingly into three smaller modules:
+    modules/cluster/asg-rolling-deploy
+    A generic, reusable, standalone module for deploying an ASG that can do a zero-downtime, rolling deployment.
+    modules/networking/alb
+    A generic, reusable, standalone module for deploying an ALB.
+    modules/services/hello-world-app
+    A module specifically for deploying the “Hello, World” app.
+    Before getting started, make sure to run terraform destroy on any webserver-cluster deployments you have from previous chapters. After you do that, you can start putting together the asg-
+    rolling-deploy and alb modules. Create a new folder at modules/cluster/asg-rolling-deploy and move (i.e., cut and paste) the following resources from module/services/webserver-cluster/main.tf 
+    to modules/cluster/asg-rolling-deploy/main.tf:
+          aws_launch_configuration
+          aws_autoscaling_group
+    aws_autoscaling_schedule (both of them)
+    aws_security_group (for the Instances, but not for the ALB)
+    aws_security_group_rule (both of the rules for the Instances, but not those for the ALB)
+    aws_cloudwatch_metric_alarm (both of them)
+    Next, move the following variables from to module/services/webserver-cluster/variables.tf to modules/cluster/asg-rolling-deploy/variables.tf:
+          cluster_name
+          ami
+          instance_type
+          min_size
+          max_size
+          enable_autoscaling
+          custom_tags
+          server_port
+
+    Let’s now move on to the ALB module. Create a new folder at modules/networking/alb and move the following resources from module/services/webserver-cluster/main.tf to modules/networking/alb/main.tf:
+      aws_lb
+      aws_lb_listener
+    aws_security_group (the one for the ALB, but not for the Instances)
+    aws_security_group_rule (both of the rules for the ALB, but not for the Instances)
+
+    
+    There’s one other practice that you will find useful as soon as you start regularly testing your modules: version pinning. You should pin all of your Terraform modules to a specific version of Terraform using 
+    the required_version argument. At a bare minimum, you should require a specific major version of Terraform:
+
+    ```
+        terraform {
+            # Require any 0.12.x version of Terraform 
+            required_version = ">= 0.12, < 0.13"
+    }
+    ```
+
+    For production-grade code, I recommend pinning the version even more strictly:
+    ```
+        terraform {
+            # Require Terraform at exactly version 0.12.0 
+            required_version = "= 0.12.0"
+        }
+    ```
+
+    NB : you can use many resources for from terraform registry -> https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc
+
+    ++ Clean-up infrastructure :
+
+    - cloud-nuke :
+    An open source tool that can delete all the resources in your cloud environment. It currently supports a number of resources in AWS 
+    (e.g., Amazon EC2 Instances, ASGs, ELBs, etc.), with support for other resources and other clouds (Google Cloud, Azure) coming in the future. The key feature is the ability to
+    delete all resources older than a certain age. For example, a common pattern is to run cloud-nuke as a cron job once per day in each sandbox environment to delete 
+    all resources that are more than two days old, based on the assumption that any infrastructure a developer fired up for manual testing is no longer necessary after a couple days:
+    
+    $ cloud-nuke aws --older-than 48h
+
+    

@@ -2559,3 +2559,29 @@
 
     + show syntax errors :
     $ terraform refresh
+
+![](./static/terraform-resources-lifecycle.png)
+
+## Chapter 7 : Deploying a Multi-Tiered Web Application in AWS :
+
+![](./static/multi-tier-web-application.png)
+
+    + Architecture description :
+
+    At a high level, clients are directed through a web portal to a service hosted on an EC2 instance, which then talks to the database layer. More specifically, 
+    traffic from the outside world will be funneled through an internet gateway to a load balancer sitting on a public subnet. That load balancer routes HTTP traffic 
+    from port 80 to EC2 instances living in an autoscaling group over port 8080. We’ll shield the instances from malicious users by isolating them on a private subnet not accessible 
+    to the outside world except through a NAT gateway. Furthermore, we restrict allowable traffic to the instances using a security rule that only allows the load balancer to communicate over port 8080.
+
+    traffic -> internet gateway -> NAT Gateway -> load balancer (public subnet) -> autoscaling group (8080) -> EC2 instance (Private subnet, Security rule) -> RDS (MySQL, Private subnet)
+
+![](./static/architecture-diagram.png)
+
+![](./static/modules-structure.png)
+
+![](./static/modules-files-details.png)
+
+    
+    
+    
+    
